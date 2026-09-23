@@ -29,3 +29,6 @@ samples/
 # python
 analysis/.venv/
 __pycache__/
+
+# local UI preview data
+public/mock/

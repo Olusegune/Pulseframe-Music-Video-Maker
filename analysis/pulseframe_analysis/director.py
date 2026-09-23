@@ -5,7 +5,7 @@ script data, its timed shots, flags, the song context and the character bible,
 and returns revised shots with complete direction. Hard constraints (scene time
 span, beat-grid cuts, no invented story) are re-validated here, never trusted.
 
-Key: OS credential store (service "pulseframe", user "openai"), never files/env.
+Key: handed over by the app from the OS credential store (PULSEFRAME_OPENAI_KEY, this process only).
 Model: PULSEFRAME_DIRECTOR_MODEL env var or --model; not hard-coded in logic.
 """
 from __future__ import annotations
@@ -82,7 +82,8 @@ You direct one scene at a time from a writer's script. The writer is the creativ
 def _client():
     import keyring
     from openai import OpenAI
-    key = keyring.get_password("pulseframe", "openai")
+    # The app passes the key from the OS credential store to this process only.
+    key = os.environ.get("PULSEFRAME_OPENAI_KEY") or keyring.get_password("pulseframe", "openai")
     if not key:
         raise SystemExit("No OpenAI key in the OS credential store (service 'pulseframe', user 'openai').")
     return OpenAI(api_key=key)

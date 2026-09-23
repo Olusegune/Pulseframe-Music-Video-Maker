@@ -82,7 +82,8 @@ def separate_vocals(audio: str, out_dir: str) -> str:
     vocals = os.path.join(out_dir, "htdemucs", stem, "vocals.wav")
     if not os.path.exists(vocals):
         subprocess.run([sys.executable, "-m", "demucs", "--two-stems", "vocals", "-n", "htdemucs",
-                        "-o", out_dir, audio], check=True, capture_output=True)
+                        "-o", out_dir, audio], check=True, capture_output=True,
+                       creationflags=0x08000000 if sys.platform == "win32" else 0)  # no console window
     return vocals
 
 

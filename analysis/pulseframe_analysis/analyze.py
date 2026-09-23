@@ -42,6 +42,7 @@ class SongMap:
     sections: list[Section] = field(default_factory=list)
     lyrics: list[dict] = field(default_factory=list)     # [{section, text, start, end}]
     lyric_match: float | None = None                     # fraction of lyric words heard
+    peaks: list[float] = field(default_factory=list)     # 2000-point waveform envelope for display
     analyzer: str = "librosa-baseline"
 
 
@@ -132,9 +133,9 @@ def analyze(path: str) -> SongMap:
     emit("loading", 0.0)
     y, sr = librosa.load(path, sr=SR, mono=True)
     duration = float(len(y) / sr)
-    emit("waveform", 0.1, duration=duration,
-         peaks=np.abs(y[: len(y) // 2000 * 2000]).reshape(-1, len(y) // 2000).max(axis=0).round(3).tolist()
-         if len(y) >= 2000 else [])
+    wave_peaks = (np.abs(y[: len(y) // 2000 * 2000]).reshape(2000, -1).max(axis=1).round(3).tolist()
+             if len(y) >= 2000 else [])
+    emit("waveform", 0.1, duration=duration, peaks=wave_peaks)
 
     onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=HOP)
     # Fine hop for beat timing: at HOP=512 tempo is quantized (~120 BPM reads as 117.45).
@@ -201,6 +202,7 @@ def analyze(path: str) -> SongMap:
 
     song_map = SongMap(SCHEMA_VERSION, round(duration, 3), round(bpm, 2), beats.round(3).tolist(),
                        downbeats.round(3).tolist(), energy_curve, accents, sections)
+    song_map.peaks = wave_peaks
     return song_map
 
 
@@ -245,8 +247,11 @@ def main(argv: list[str]) -> int:
         print(json.dumps({"event": "error", "message": str(e)}), flush=True)
         return 1
     emit("done", 1.0)
-    with open(a.out, "w", encoding="utf-8") as f:
+    import os
+    tmp = a.out + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(asdict(sm), f, indent=1)
+    os.replace(tmp, a.out)
     return 0
 
 
