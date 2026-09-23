@@ -75,6 +75,17 @@ def _enable_cuda_dlls() -> None:
                 os.environ["PATH"] = d + os.pathsep + os.environ["PATH"]
 
 
+def separate_vocals(audio: str, out_dir: str) -> str:
+    """Isolate the vocal stem with Demucs (htdemucs). Returns the vocals WAV path; cached per file."""
+    import subprocess
+    stem = os.path.splitext(os.path.basename(audio))[0]
+    vocals = os.path.join(out_dir, "htdemucs", stem, "vocals.wav")
+    if not os.path.exists(vocals):
+        subprocess.run([sys.executable, "-m", "demucs", "--two-stems", "vocals", "-n", "htdemucs",
+                        "-o", out_dir, audio], check=True, capture_output=True)
+    return vocals
+
+
 def transcribe_words(audio: str, prompt: str = "", model_size: str = "large-v3") -> list[tuple[str, float, float]]:
     _enable_cuda_dlls()
     from faster_whisper import WhisperModel
@@ -108,4 +119,35 @@ def align(sections: list[LyricSection], words: list[tuple[str, float, float]]) -
             nxt = next((lines[j].start for j in range(i + 1, len(lines)) if lines[j].start is not None), None)
             if prev is not None and nxt is not None:
                 ln.start, ln.end = prev, nxt
+    # A stray early match stretches a line across an instrumental gap; clamp outliers to the
+    # line's own tail, which is anchored by its last matched words.
+    spans = sorted(ln.end - ln.start for ln in lines if ln.start is not None)
+    if spans:
+        typical = spans[len(spans) // 2]
+        for ln in lines:
+            if ln.start is not None and ln.end - ln.start > 3 * typical:
+                ln.start = ln.end - 1.5 * typical
     return matched / max(1, len(lyric_tokens))
+
+
+def sections_from_lyrics(sections: list[LyricSection], duration: float, downbeats: list[float]) -> list[dict]:
+    """Song sections bounded by sung lyrics: each starts at the bar containing its first line
+    (catching pickups), runs until the next one; instrumental intro/outro fill the edges."""
+    def bar_start(t: float) -> float:
+        prior = [d for d in downbeats if d <= t + 0.15]
+        return prior[-1] if prior else t
+
+    timed = [(s, min(ln.start for ln in s.lines if ln.start is not None))
+             for s in sections if any(ln.start is not None for ln in s.lines)]
+    out: list[dict] = []
+    starts = [bar_start(t) for _, t in timed]
+    if starts and starts[0] > 2.0:
+        out.append({"label": "INTRO", "tag": "Intro", "start": 0.0, "end": starts[0]})
+    for i, (s, _) in enumerate(timed):
+        end = starts[i + 1] if i + 1 < len(timed) else max(ln.end for ln in s.lines if ln.end is not None)
+        out.append({"label": s.label, "tag": s.tag, "start": starts[i], "end": end})
+    last_end = out[-1]["end"] if out else 0.0
+    if duration - last_end > 2.0:
+        out[-1]["end"] = bar_start(last_end + 1.0) if bar_start(last_end + 1.0) > last_end else last_end
+        out.append({"label": "OUTRO", "tag": "Outro", "start": out[-1]["end"], "end": duration})
+    return out

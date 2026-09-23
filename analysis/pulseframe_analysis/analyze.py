@@ -40,6 +40,8 @@ class SongMap:
     energy_curve: list[list[float]]          # [time, 0..1]
     accents: list[float]
     sections: list[Section] = field(default_factory=list)
+    lyrics: list[dict] = field(default_factory=list)     # [{section, text, start, end}]
+    lyric_match: float | None = None                     # fraction of lyric words heard
     analyzer: str = "librosa-baseline"
 
 
@@ -199,8 +201,31 @@ def analyze(path: str) -> SongMap:
 
     song_map = SongMap(SCHEMA_VERSION, round(duration, 3), round(bpm, 2), beats.round(3).tolist(),
                        downbeats.round(3).tolist(), energy_curve, accents, sections)
-    emit("done", 1.0)
     return song_map
+
+
+def _apply_lyrics(sm: SongMap, audio: str, lyrics_path: str, work_dir: str) -> None:
+    """Replace novelty sections with lyric-bounded ones and attach timed lines."""
+    from . import lyrics as L
+    with open(lyrics_path, encoding="utf-8") as f:
+        secs = L.parse_lyrics(f.read())
+    emit("vocals", 0.92)
+    vocals = L.separate_vocals(audio, work_dir)
+    emit("lyrics", 0.95)
+    words = L.transcribe_words(vocals, prompt=" ".join(ln.text for s in secs for ln in s.lines))
+    sm.lyric_match = round(L.align(secs, words), 3)
+    curve = np.array(sm.energy_curve)
+    out = []
+    for i, sec in enumerate(L.sections_from_lyrics(secs, sm.duration, sm.downbeats)):
+        m = (curve[:, 0] >= sec["start"]) & (curve[:, 0] < sec["end"])
+        e = int(np.clip(round(1 + 9 * float(curve[m, 1].mean() if m.any() else 0)), 1, 10))
+        out.append(Section(round(sec["start"], 2), round(sec["end"], 2), sec["label"], sec["tag"], e, _mood(e)))
+    sm.sections = out
+    sm.lyrics = [{"section": s.tag, "text": ln.text,
+                  "start": None if ln.start is None else round(ln.start, 2),
+                  "end": None if ln.end is None else round(ln.end, 2)} for s in secs for ln in s.lines]
+    sm.analyzer = "librosa-baseline+demucs+whisper-align"
+    emit("sections", 0.99, sections=[asdict(x) for x in out], lyrics=sm.lyrics)
 
 
 def main(argv: list[str]) -> int:
@@ -208,12 +233,18 @@ def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="pulseframe-analysis")
     p.add_argument("audio")
     p.add_argument("--out", required=True)
+    p.add_argument("--lyrics", help="lyrics text with [Section] tags; enables lyric-bounded sections")
+    p.add_argument("--work-dir", help="cache for stems (default: next to --out)")
     a = p.parse_args(argv)
     try:
         sm = analyze(a.audio)
+        if a.lyrics:
+            import os
+            _apply_lyrics(sm, a.audio, a.lyrics, a.work_dir or os.path.join(os.path.dirname(os.path.abspath(a.out)), "stems"))
     except Exception as e:  # surfaced to the app as a structured error
         print(json.dumps({"event": "error", "message": str(e)}), flush=True)
         return 1
+    emit("done", 1.0)
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(asdict(sm), f, indent=1)
     return 0
