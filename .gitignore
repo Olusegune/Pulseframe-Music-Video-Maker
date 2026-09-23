@@ -25,3 +25,7 @@ dist-ssr
 
 # local test media
 samples/
+
+# python
+analysis/.venv/
+__pycache__/
