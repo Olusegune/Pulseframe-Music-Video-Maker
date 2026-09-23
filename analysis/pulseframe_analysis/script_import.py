@@ -51,8 +51,11 @@ class Shot:
     section: str = ""
     lyrics: list[str] = field(default_factory=list)
     sync_accents: list[float] = field(default_factory=list)
+    source_shots: list[str] = field(default_factory=list)  # script shot ids this contract covers
+    beats: list[str] = field(default_factory=list)          # ordered story beats (merged shots)
     renderer: str = "auto"
     state: str = "planned"
+    flags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -132,7 +135,48 @@ def _make_shot(scene: Scene, n: int, desc: str, names: list[str]) -> Shot:
             performers.append(name)
     if not performers and re.search(r"\b(his|he|him)\b", low) and "Sege" in scene.characters:
         performers = ["Sege"]
-    return Shot(f"S{scene.number:02d}-{n:02d}", scene.number, n, desc, framing, moves, performers)
+    sid = f"S{scene.number:02d}-{n:02d}"
+    return Shot(sid, scene.number, n, desc, framing, moves, performers, source_shots=[sid], beats=[desc])
+
+
+FRAMING_ORDER = ["extreme close-up", "close-up", "point of view", "over the shoulder", "medium", "two-shot",
+                 "montage", "wide"]
+MIN_SHOT = 2.0        # seconds; below this a generated shot doesn't read
+LONG_TAKE_MIN = 2.5   # scenes whose camera notes ask for long takes / minimal movement
+MAX_BEATS = 3         # more story beats than this can't be carried by one generated shot
+
+
+def consolidate(scene: Scene) -> None:
+    """Merge adjacent shots until the scene's average shot meets the minimum readable length.
+
+    Prefers pairs that share performers (one continuous move can cover both beats) and keeps
+    every original description as an ordered beat, so no story information is lost.
+    """
+    cam = scene.notes.get("CAMERA", "").lower()
+    floor = LONG_TAKE_MIN if re.search(r"long(er)? takes|minimal movement", cam) else MIN_SHOT
+    span = scene.end - scene.start
+    target = max(1, min(len(scene.shots), int(span // floor)))
+
+    def affinity(a: Shot, b: Shot) -> float:
+        shared = len(set(a.performers) & set(b.performers))
+        return shared + (0.5 if a.framing == b.framing else 0) - 0.1 * (len(a.beats) + len(b.beats))
+
+    while len(scene.shots) > target:
+        pairs = [k for k in range(len(scene.shots) - 1)
+                 if len(scene.shots[k].beats) + len(scene.shots[k + 1].beats) <= MAX_BEATS]
+        if not pairs:
+            break
+        i = max(pairs, key=lambda k: affinity(scene.shots[k], scene.shots[k + 1]))
+        a, b = scene.shots[i], scene.shots[i + 1]
+        wider = max(a.framing, b.framing, key=FRAMING_ORDER.index)
+        moves = list(dict.fromkeys(a.camera_moves + b.camera_moves))
+        if a.framing != b.framing:
+            moves.append(f"continuous move {a.framing} -> {b.framing}")
+        scene.shots[i:i + 2] = [Shot(a.id, scene.number, a.number, " Then: ".join([a.description, b.description]),
+                                     wider, moves, list(dict.fromkeys(a.performers + b.performers)),
+                                     source_shots=a.source_shots + b.source_shots, beats=a.beats + b.beats)]
+    for k, sh in enumerate(scene.shots, 1):
+        sh.number, sh.id = k, f"S{scene.number:02d}-{k:02d}"
 
 
 def _norm(s: str) -> str:
@@ -186,6 +230,10 @@ def time_shots(scenes: list[Scene], song_map: dict) -> None:
             shot.lyrics = [ln["text"] for ln in lines if ln["start"] is not None
                            and ln["start"] < b and ln["end"] > a]
             shot.sync_accents = [x for x in song_map.get("accents", []) if a <= x < b]
+            if (b - a) / len(shot.beats) < 1.0 - 0.05:
+                shot.flags.append("overloaded: under 1s per story beat")
+            if b - a < MIN_SHOT - 0.05:
+                shot.flags.append("short: under 2s")
 
 
 def build(script_path: str, song_map_path: str) -> dict:
@@ -193,6 +241,8 @@ def build(script_path: str, song_map_path: str) -> dict:
         song_map = json.load(f)
     meta, characters, scenes = parse_script(read_text(script_path))
     anchor_scenes(scenes, song_map)
+    for sc in scenes:
+        consolidate(sc)
     time_shots(scenes, song_map)
     return {"schema_version": 1, "meta": meta, "characters": [asdict(c) for c in characters],
             "scenes": [asdict(s) for s in scenes]}
