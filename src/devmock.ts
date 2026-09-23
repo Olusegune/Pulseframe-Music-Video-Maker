@@ -3,13 +3,15 @@
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
 export async function installMock() {
-  const [song_map, production] = await Promise.all(["songmap", "production"].map((n) => fetch(`/mock/${n}.json`).then((r) => r.json())));
+  // Sample data lives outside public/ so it never ships in the app bundle.
+  const url = (f: string) => new URL(`../mock-data/${f}`, import.meta.url).href;
+  const [song_map, production] = await Promise.all(["songmap.json", "production.json"].map((n) => fetch(url(n)).then((r) => r.json())));
   const project = { title: "Exit Plan", state: "analyzed", song: "song.wav", aspect_ratio: "2.39:1", artist: "Uncle Sege" };
   mockWindows("main");
   mockIPC((cmd) => {
     switch (cmd) {
       case "list_projects": return [{ dir: "mock", title: "Exit Plan", state: "analyzed", modified: Date.now() / 1000, song: "song.wav" }];
-      case "load_project": return { dir: "mock", project, song_path: "/mock/song.wav", song_map, production, directed: null };
+      case "load_project": return { dir: "mock", project, song_path: url("song.wav"), song_map, production, directed: null };
       case "key_status": return { openai: false, fal: false, kie: false };
       case "plugin:event|listen": return 1;
       default: return null;

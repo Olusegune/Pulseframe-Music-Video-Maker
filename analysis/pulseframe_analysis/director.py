@@ -35,7 +35,7 @@ SHOT_SCHEMA = {
         "purpose": {"type": "string", "description": "Narrative/emotional job of the shot in one sentence."},
         "performers": {"type": "array", "items": {"type": "string"}},
         "emotion": {"type": "string"},
-        "performance_intensity": {"type": "integer", "minimum": 1, "maximum": 10},
+        "performance_intensity": {"type": "integer", "description": "1 (barely) to 10 (maximum)."},
         "performance": {"type": "string", "description": "Acting direction: intention, body language, gaze."},
         "expression": {"type": "string", "description": "Facial expression and its change within the shot."},
         "movement": {"type": "string", "description": "Physical action / blocking. Not dance unless scripted."},
@@ -130,6 +130,7 @@ def retime(scene: dict, shots: list[dict], beats: list[float]) -> None:
         s["scene"], s["number"] = scene["number"], k
         s["start"], s["end"] = round(a, 3), round(b, 3)
         s["duration_seconds"] = round(b - a, 3)
+        s["performance_intensity"] = max(1, min(10, int(s.get("performance_intensity", 5))))
         s.setdefault("renderer", "auto")
         s.setdefault("state", "planned")
 
@@ -152,6 +153,25 @@ def validate(scene: dict, shots: list[dict]) -> list[str]:
     return issues
 
 
+PREFERRED = ("gpt-5", "gpt-4.1", "gpt-4o")  # families that support strict structured outputs
+
+
+def resolve_model(client, wanted: str) -> str:
+    """Use the requested model if this account has it; otherwise the newest preferred family member."""
+    try:
+        ids = {m.id for m in client.models.list()}
+    except Exception:
+        return wanted  # listing not permitted: let the call itself report problems
+    if wanted in ids:
+        return wanted
+    for family in PREFERRED:
+        cands = sorted(i for i in ids if i == family or (i.startswith((family + "-", family + ".")) and not any(
+            x in i for x in ("mini", "nano", "audio", "realtime", "search", "transcribe", "tts", "image"))))
+        if cands:
+            return cands[-1]
+    raise SystemExit(f"No suitable OpenAI model available (wanted {wanted}).")
+
+
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="pulseframe-director")
     p.add_argument("plan")
@@ -166,13 +186,19 @@ def main(argv: list[str]) -> int:
         song_map = json.load(f)
     want = {int(x) for x in a.scenes.split(",")} if a.scenes else None
     client = _client()
+    a.model = resolve_model(client, a.model)
     out = {"schema_version": 1, "model": a.model, "meta": plan["meta"], "characters": plan["characters"],
            "scenes": []}
     for scene in plan["scenes"]:
         if want and scene["number"] not in want:
             continue
-        print(json.dumps({"event": "progress", "stage": f"directing scene {scene['number']}"}), flush=True)
-        directed = direct_scene(client, a.model, plan, scene, song_map)
+        print(json.dumps({"event": "progress", "stage": f"directing scene {scene['number']} of {len(plan['scenes'])}"}),
+              flush=True)
+        try:
+            directed = direct_scene(client, a.model, plan, scene, song_map)
+        except Exception as e:  # surface a readable reason to the app instead of a traceback
+            print(json.dumps({"event": "error", "message": f"Scene {scene['number']}: {e}"}), flush=True)
+            return 1
         retime(scene, directed["shots"], song_map["beats"])
         issues = validate(scene, directed["shots"])
         out["scenes"].append({**{k: scene[k] for k in ("number", "heading", "start", "end", "notes")},

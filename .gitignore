@@ -31,4 +31,4 @@ analysis/.venv/
 __pycache__/
 
 # local UI preview data
-public/mock/
+mock-data/
