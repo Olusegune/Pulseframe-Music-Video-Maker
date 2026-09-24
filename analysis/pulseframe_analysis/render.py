@@ -241,7 +241,7 @@ def _duration_value(field: dict, need: float):
 
 
 def compile_request(shot: dict, scene: dict | None, plan: dict, project: dict, man: dict,
-                    refs: list[dict], overrides: dict | None = None) -> dict:
+                    refs: list[dict], overrides: dict | None = None, fix_notes: list[str] | None = None) -> dict:
     """refs: [{'label': 'Sege, Amara, Young Sege — character sheet', 'url': ...}] already uploaded."""
     roles, fields = man["roles"], {f["name"]: f for f in man["inputs"]}
     payload: dict = {}
@@ -267,6 +267,8 @@ def compile_request(shot: dict, scene: dict | None, plan: dict, project: dict, m
         parts.append("References: " + "; ".join(tags) + ". Match the characters' faces, hair and wardrobe exactly.")
     if look["avoid"] and "negative_prompt" not in roles:
         parts.append(f"Avoid: {look['avoid']}.")
+    if fix_notes:
+        parts.append("Corrections from review: " + " ".join(n.rstrip(".") + "." for n in fix_notes))
     parts.append("No on-screen text, no subtitles, no watermark. Performers do not lip-sync.")
     payload[roles.get("prompt", "prompt")] = " ".join(p.strip() for p in parts if p)
 
@@ -519,7 +521,8 @@ def _uploaded(d: str, provider, files: list[dict]) -> list[dict]:
     return out
 
 
-def enqueue(d: str, shot_ids: list[str], provider: str, model: str | None, overrides: dict | None) -> list[dict]:
+def enqueue(d: str, shot_ids: list[str], provider: str, model: str | None, overrides: dict | None,
+            fix_notes: list[str] | None = None) -> list[dict]:
     project = _read(os.path.join(d, "project.json"), {})
     plan_name, plan = _load_plan(d)
     model = model or AUTO[provider]
@@ -532,7 +535,7 @@ def enqueue(d: str, shot_ids: list[str], provider: str, model: str | None, overr
         shot, scene = _shot(plan, sid)
         job = {"id": uuid.uuid4().hex[:12], "shot_id": sid, "plan": plan_name, "source_shots": shot.get("source_shots", []),
                "shot_start": shot["start"], "shot_end": shot["end"], "provider": provider, "model": man["model"],
-               "overrides": overrides or {}, "look": resolve_look(project)["id"], "state": "queued", "provider_job_id": None, "attempts": 0,
+               "overrides": overrides or {}, "fix_notes": fix_notes or [], "look": resolve_look(project)["id"], "state": "queued", "provider_job_id": None, "attempts": 0,
                "created": int(time.time()), "updated": int(time.time()), "output": None, "error": None, "cost": None}
         store.jobs.append(job)
         made.append(job)
@@ -593,6 +596,7 @@ def run(d: str, poll_every: float = 6.0) -> None:
     finally:
         if os.path.exists(lock):
             os.remove(lock)
+    review_pending(d)
     emit(event="progress", stage="all renders settled")
 
 
@@ -602,7 +606,7 @@ def _submit(d: str, store: Store, project: dict, p, j: dict) -> None:
     man = manifest(j["provider"], j["model"])
     emit(event="progress", stage=f"preparing {j['shot_id']}")
     refs = _uploaded(d, p, _reference_files(d, project))
-    payload = compile_request(shot, scene, plan, project, man, refs, j.get("overrides"))
+    payload = compile_request(shot, scene, plan, project, man, refs, j.get("overrides"), j.get("fix_notes"))
     # Persist intent BEFORE the billable call; the id is persisted the moment it returns.
     store.update(j, state="submitting", payload=payload, attempts=j["attempts"] + 1)
     emit(event="progress", stage=f"sending {j['shot_id']} to {j['provider']}")
@@ -630,6 +634,37 @@ def _check(d: str, store: Store, p, j: dict) -> None:
     os.replace(out + ".part", out)
     store.update(j, state="ready", output=os.path.relpath(out, d).replace(os.sep, "/"), output_url=res["url"],
                  cost=res.get("cost"), cost_unit=res.get("cost_unit"), finished=int(time.time()))
+    _review(d, store, j)
+
+
+def _review(d: str, store: Store, j: dict) -> None:
+    from .review import review_job
+    try:
+        plan = _read(os.path.join(d, f"{j['plan']}.json"), {})
+        shot, _ = _shot(plan, j["shot_id"])
+    except SystemExit:
+        return
+    emit(event="progress", stage=f"reviewing {j['shot_id']}")
+    try:
+        store.update(j, review=review_job(d, j, _read(os.path.join(d, "project.json"), {}), shot))
+    except Exception as e:
+        store.update(j, review={"reviewed": False, "error": f"{type(e).__name__}: {e}"})
+
+
+def review_pending(d: str) -> None:
+    """Review finished takes that were never checked (e.g. an OpenAI key was added later)."""
+    store = Store(d)
+    can_see = bool(os.environ.get("PULSEFRAME_OPENAI_KEY"))
+    for j in store.jobs:
+        if j["state"] != "ready" or not j.get("output"):
+            continue
+        rv = j.get("review")
+        never_checked = not rv or not rv.get("reviewed")
+        # Upgrade technical-only reviews once visual checking is possible (not after a technical failure).
+        missing_visual = can_see and rv and rv.get("visual") is None and not rv.get("visual_error") \
+            and not any(i["severity"] == "major" for i in rv.get("technical", []))
+        if never_checked or missing_visual:
+            _review(d, store, j)
 
 
 def resolve(d: str, job_id: str, action: str) -> dict:
@@ -641,6 +676,8 @@ def resolve(d: str, job_id: str, action: str) -> dict:
         store.update(j, state="queued", error=None, provider_job_id=None)
     elif action == "dismiss" and j["state"] not in ACTIVE:
         store.update(j, state="dismissed")
+    elif action == "accept" and j["state"] == "ready":
+        store.update(j, review={**(j.get("review") or {}), "accepted": True})
     else:
         raise SystemExit(f"Can't {action} a job that is {j['state']}.")
     return j
@@ -665,10 +702,10 @@ def main(argv: list[str]) -> int:
     for name in ("preview", "enqueue"):
         s = sub.add_parser(name)
         s.add_argument("project"); s.add_argument("--shots", required=True); s.add_argument("--provider", required=True)
-        s.add_argument("--model"); s.add_argument("--overrides", default="{}")
+        s.add_argument("--model"); s.add_argument("--overrides", default="{}"); s.add_argument("--fix-notes", default="[]")
     r = sub.add_parser("run"); r.add_argument("project")
     rs = sub.add_parser("resolve"); rs.add_argument("project"); rs.add_argument("--job", required=True)
-    rs.add_argument("--action", choices=["retry", "dismiss"], required=True)
+    rs.add_argument("--action", choices=["retry", "dismiss", "accept"], required=True)
     a = p.parse_args(argv)
     try:
         if a.cmd == "catalog":
@@ -678,7 +715,8 @@ def main(argv: list[str]) -> int:
         elif a.cmd == "preview":
             emit(event="result", data=preview(a.project, a.shots.split(",")[0], a.provider, a.model, json.loads(a.overrides)))
         elif a.cmd == "enqueue":
-            emit(event="result", data=enqueue(a.project, a.shots.split(","), a.provider, a.model, json.loads(a.overrides)))
+            emit(event="result", data=enqueue(a.project, a.shots.split(","), a.provider, a.model, json.loads(a.overrides),
+                                              json.loads(a.fix_notes)))
         elif a.cmd == "run":
             run(a.project)
         elif a.cmd == "resolve":

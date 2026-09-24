@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, AUTO_MODEL, errorText, type CatalogItem, type Job, type KeyStatus, type Manifest, type ManifestInput, type Shot } from "./api";
 import * as I from "./icons";
+import { needsAttention } from "./Review";
 
 export const PROVIDER_NAME: Record<string, string> = { fal: "fal.ai", kie: "Kie.ai" };
 export const ACTIVE_STATES = ["queued", "submitting", "submitted"];
@@ -120,6 +121,11 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
             <div key={j.id} className="take">
               <div className="take-top"><JobChip job={j} /><span className="dim num">{PROVIDER_NAME[j.provider]} · {shortModel(j.model)}</span></div>
               {j.error && <div className="take-err">{j.error}</div>}
+              {j.state === "ready" && j.review?.reviewed && (
+                <div className={`take-err ${needsAttention(j) ? "warn" : ""}`}>
+                  {j.review.accepted ? "Kept by you. " : ""}{j.review.summary}
+                  {needsAttention(j) && <ul className="ri-issues">{(j.review.issues ?? []).map((i, k) => <li key={k}>{i.detail}</li>)}</ul>}
+                </div>)}
               {j.state === "ready" && j.look && j.look !== lookId &&
                 <div className="take-err" style={{ color: "var(--warning)" }}>Rendered in an earlier look. Render a new take to match.</div>}
               {j.cost != null && <div className="dim num">Cost: {j.cost} {j.cost_unit ?? ""}</div>}

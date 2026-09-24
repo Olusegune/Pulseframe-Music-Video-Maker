@@ -318,7 +318,8 @@ async fn direct_project(app: AppHandle, dir: String) -> Result<(), String> {
 
 fn provider_env() -> Vec<(&'static str, String)> {
     let mut env = vec![];
-    for (provider, var) in [("fal", "FAL_KEY"), ("kie", "KIE_KEY")] {
+    // OpenAI powers the visual review of finished takes.
+    for (provider, var) in [("fal", "FAL_KEY"), ("kie", "KIE_KEY"), ("openai", "PULSEFRAME_OPENAI_KEY")] {
         if let Ok(k) = keyring::Entry::new(KEY_SERVICE, provider).and_then(|e| e.get_password()) {
             env.push((var, k));
         }
@@ -389,7 +390,7 @@ async fn render_preview(app: AppHandle, dir: String, shot: String, provider: Str
 /// Queue shots for rendering (billable once the renderer sends them) and start the renderer.
 #[tauri::command]
 async fn queue_render(app: AppHandle, dir: String, shots: Vec<String>, provider: String, model: Option<String>,
-                      overrides: Value) -> Result<Value, String> {
+                      overrides: Value, fix_notes: Option<Vec<String>>) -> Result<Value, String> {
     let key_ok = keyring::Entry::new(KEY_SERVICE, &provider).and_then(|e| e.get_password()).is_ok();
     if !key_ok {
         return Err(format!("Add your {} key in Settings first.", if provider == "fal" { "fal.ai" } else { "Kie.ai" }));
@@ -397,7 +398,10 @@ async fn queue_render(app: AppHandle, dir: String, shots: Vec<String>, provider:
     let app2 = app.clone();
     let d2 = dir.clone();
     let made = tauri::async_runtime::spawn_blocking(move || {
-        run_engine_result(&app2, "enqueue", &render_args("enqueue", &shot_args(d2, shots, provider, model, overrides)), &[])
+        let mut args = shot_args(d2, shots, provider, model, overrides);
+        args.push("--fix-notes".into());
+        args.push(json!(fix_notes.unwrap_or_default()).to_string());
+        run_engine_result(&app2, "enqueue", &render_args("enqueue", &args), &[])
     }).await.map_err(err)??;
     ensure_renderer(app, dir);
     Ok(made)

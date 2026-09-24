@@ -5,6 +5,7 @@ import { ACTIVE_STATES, ConfirmRender, defaultProvider, JobChip, latestJobs, Ren
 import { AUTO_MODEL, type Job, type KeyStatus } from "./api";
 import { ExportSheet } from "./Export";
 import { LookPicker, lookName, normalizeLook, useStyles } from "./Looks";
+import { needsAttention, ReviewSheet } from "./Review";
 
 type Selection = { kind: "shot"; id: string } | { kind: "section"; index: number } | null;
 
@@ -29,6 +30,7 @@ export function Studio({ project, onHome, onSettings, onReload }: {
   const [confirmAll, setConfirmAll] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [lookOpen, setLookOpen] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const [look, setLook] = useState(normalizeLook(project.project.look));
   const styles = useStyles();
   const saveLook = async (l: typeof look) => {
@@ -110,7 +112,7 @@ export function Studio({ project, onHome, onSettings, onReload }: {
     finally { un(); setJob(null); }
   };
 
-  const flagged = shots.filter((s) => (s.flags?.length ?? 0) > 0).length;
+  const flagged = shots.filter((s) => (s.flags?.length ?? 0) > 0 || needsAttention(latest.get(s.id))).length;
   const toRender = shots.filter((s) => { const j = latest.get(s.id); return !j || j.state === "failed"; });
   const renderAll = async () => {
     setConfirmAll(false);
@@ -127,7 +129,8 @@ export function Studio({ project, onHome, onSettings, onReload }: {
         <RailBtn icon={<I.Folder />} label="Project" disabled />
         <RailBtn icon={<I.Assets />} label="Assets" disabled />
         <RailBtn icon={<I.Studio />} label="Studio" active />
-        <RailBtn icon={<I.Review />} label="Review" disabled />
+        <RailBtn icon={<I.Review />} label="Review" onClick={() => setReviewing(true)} disabled={!plan}
+                 badge={shots.filter((s) => needsAttention(latest.get(s.id))).length} />
         <RailBtn icon={<I.Export />} label="Export" onClick={() => setExporting(true)} disabled={!plan} />
         <div className="spacer" />
         <RailBtn icon={<I.Gear />} label="Settings" onClick={onSettings} />
@@ -183,6 +186,9 @@ export function Studio({ project, onHome, onSettings, onReload }: {
       <Timeline map={map} shots={shots} time={time} sel={sel} flagged={flagged} latest={latest}
                 onSeek={seek} onSelect={(s) => { setSel(s); if (s?.kind === "shot") { const sh = shots.find((x) => x.id === s.id); if (sh) seek(sh.start); } }} />
 
+      {reviewing && <ReviewSheet dir={project.dir} shots={shots} latest={latest} keys={keys} onJobs={mergeJobs}
+                                 onSelect={(id) => { setSel({ kind: "shot", id }); const sh = shots.find((x) => x.id === id); if (sh) seek(sh.start); }}
+                                 onClose={() => setReviewing(false)} />}
       {lookOpen && <LookPicker value={look} director={director} onCancel={() => setLookOpen(false)} onSave={saveLook} />}
       {exporting && <ExportSheet dir={project.dir} projectAspect={project.project.aspect_ratio} shots={shots.length}
                                  rendered={shots.filter((s) => latest.get(s.id)?.state === "ready").length}
@@ -214,11 +220,12 @@ const aspectNum = (r?: string) => {
 };
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-function RailBtn({ icon, label, active, disabled, onClick }: {
-  icon: React.ReactNode; label: string; active?: boolean; disabled?: boolean; onClick?: () => void;
+function RailBtn({ icon, label, active, disabled, onClick, badge }: {
+  icon: React.ReactNode; label: string; active?: boolean; disabled?: boolean; onClick?: () => void; badge?: number;
 }) {
   return <button className={active ? "active" : ""} disabled={disabled} onClick={onClick}
-                 title={disabled ? `${label} — coming soon` : label} aria-current={active ? "page" : undefined}>{icon}<span>{label}</span></button>;
+                 title={disabled ? `${label} — coming soon` : label} aria-current={active ? "page" : undefined}>
+    {icon}<span>{label}</span>{badge ? <i className="rail-badge" aria-label={`${badge} need attention`}>{badge}</i> : null}</button>;
 }
 
 export function StateChip({ shot }: { shot: Shot }) {
@@ -466,6 +473,7 @@ function Timeline({ map, shots, time, sel, flagged, latest, onSeek, onSelect }: 
 }
 
 function CardState({ job, flagged }: { job?: Job; flagged: boolean }) {
+  if (needsAttention(job)) return <span style={{ color: "var(--warning)" }}><I.Alert size={10} /> Needs review</span>;
   if (job?.state === "ready") return <span style={{ color: "var(--success)" }}><I.Check size={10} /> Ready</span>;
   if (job && ACTIVE_STATES.includes(job.state)) return <span style={{ color: "var(--signal-bright)" }}><span className="spin sm" /> {job.state === "queued" ? "Queued" : "Rendering"}</span>;
   if (job?.state === "failed") return <span style={{ color: "var(--error)" }}><I.Alert size={10} /> Failed</span>;

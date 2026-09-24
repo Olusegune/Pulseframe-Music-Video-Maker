@@ -46,6 +46,12 @@ export type Job = {
   overrides: Record<string, unknown>; payload?: Record<string, unknown>; provider_job_id: string | null;
   output: string | null; error: string | null; cost: number | null; cost_unit?: string | null;
   created: number; updated: number; attempts: number; shot_start: number; shot_end: number; look?: string;
+  fix_notes?: string[]; review?: Review;
+};
+export type ReviewIssue = { kind: string; severity: "minor" | "major"; detail: string; fix: string };
+export type Review = {
+  reviewed: boolean; status?: "good" | "minor" | "needs_attention"; summary?: string; issues?: ReviewIssue[];
+  fixes?: string[]; visual?: { model: string } | null; visual_error?: string; accepted?: boolean; error?: string;
 };
 export type ManifestInput = {
   name: string; type: string; items: string | null; enum: (string | number)[] | null; default: unknown;
@@ -91,9 +97,10 @@ export const api = {
   modelManifest: (provider: string, model: string) => invoke<Manifest>("model_manifest", { provider, model }),
   renderPreview: (dir: string, shot: string, provider: string, model: string | null, overrides: Record<string, unknown>) =>
     invoke<{ manifest: Manifest; payload: Record<string, unknown> }>("render_preview", { dir, shot, provider, model, overrides }),
-  queueRender: (dir: string, shots: string[], provider: string, model: string | null, overrides: Record<string, unknown>) =>
-    invoke<Job[]>("queue_render", { dir, shots, provider, model, overrides }),
-  resolveJob: (dir: string, job: string, action: "retry" | "dismiss") => invoke<Job>("resolve_job", { dir, job, action }),
+  queueRender: (dir: string, shots: string[], provider: string, model: string | null, overrides: Record<string, unknown>,
+                fixNotes: string[] = []) =>
+    invoke<Job[]>("queue_render", { dir, shots, provider, model, overrides, fixNotes }),
+  resolveJob: (dir: string, job: string, action: "retry" | "dismiss" | "accept") => invoke<Job>("resolve_job", { dir, job, action }),
   onRenderIdle: (fn: (e: { dir: string; error: string | null }) => void): Promise<UnlistenFn> =>
     listen<{ dir: string; error: string | null }>("render-idle", (e) => fn(e.payload)),
   exportProject: (dir: string, preset: string) => invoke<ExportResult>("export_project", { dir, preset }),

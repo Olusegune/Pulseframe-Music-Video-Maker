@@ -10,6 +10,11 @@ export async function installMock() {
   const jobs = [
     { id: "j1", shot_id: "S01-01", plan: "production", provider: "fal", model: preview.manifest.model, state: "submitted", overrides: {}, provider_job_id: "r1", output: null, error: null, cost: null, created: now, updated: now, attempts: 1, shot_start: 0, shot_end: 2 },
     { id: "j2", shot_id: "S01-02", plan: "production", provider: "fal", model: preview.manifest.model, state: "failed", overrides: {}, provider_job_id: "r2", output: null, error: "422: Prompt was flagged by the provider's content filter.", cost: null, created: now, updated: now, attempts: 1, shot_start: 2, shot_end: 4.5 },
+    { id: "j4", shot_id: "S01-04", plan: "production", provider: "fal", model: preview.manifest.model, state: "ready", overrides: {}, provider_job_id: "r4", output: "x.mp4", error: null, cost: null, created: now, updated: now, attempts: 1, shot_start: 6.5, shot_end: 8.5,
+      review: { reviewed: true, status: "needs_attention", summary: "Sege is missing his beard and the suitcase is in the wrong place.", visual: { model: "gpt-5" },
+        issues: [{ kind: "character", severity: "major", detail: "Sege has no beard; the sheet shows a trimmed beard.", fix: "Sege has a neatly trimmed beard." },
+                 { kind: "artifact", severity: "minor", detail: "Left hand has six fingers briefly.", fix: "Hands have five fingers." }],
+        fixes: ["Sege has a neatly trimmed beard.", "Hands have five fingers."] } },
     { id: "j3", shot_id: "S01-03", plan: "production", provider: "kie", model: "bytedance/seedance-2", state: "uncertain", overrides: {}, provider_job_id: null, output: null, error: "The app closed while this shot was being sent. It may already be rendering (and billed). Check your provider dashboard before retrying.", cost: null, created: now, updated: now, attempts: 1, shot_start: 4.5, shot_end: 6.5 },
   ];
   const project = { title: "Exit Plan", state: "analyzed", song: "song.wav", aspect_ratio: "2.39:1", artist: "Uncle Sege", look: { style: "feature-3d", notes: "Match the character sheet exactly." } };
