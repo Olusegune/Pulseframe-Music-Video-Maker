@@ -65,7 +65,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          npx tauri build --bundles app 2>&1 | tee bundle.log
+          npx tauri build --bundles app,dmg 2>&1 | tee bundle.log
           code=${PIPESTATUS[0]}
           if [ $code -ne 0 ]; then
             grep -iE "error|failed" -A4 bundle.log | tail -60 | sed 's/%/%25/g' | while IFS= read -r l; do echo "::error::$l"; done
