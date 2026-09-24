@@ -24,18 +24,40 @@ fn projects_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Development layout: the engine lives next to src-tauri. Packaging replaces this with a bundled sidecar.
+/// Where the engine lives.
+/// - Development: the repo's `analysis/` folder with its `.venv`.
+/// - Installed app: engine code ships as app resources (`engine/`), and a private Python environment is
+///   set up once, on first launch, in the user's local app-data folder (see `setup_engine`).
+static ENGINE: std::sync::OnceLock<(PathBuf, PathBuf)> = std::sync::OnceLock::new();
+
+fn dev_engine() -> Option<(PathBuf, PathBuf)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("analysis");
+    let py = if cfg!(windows) { dir.join(".venv").join("Scripts").join("python.exe") } else { dir.join(".venv").join("bin").join("python") };
+    (py.exists() && dir.join("pulseframe_analysis").exists()).then_some((dir, py))
+}
+
+fn installed_env(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_local_data_dir().ok().map(|d| d.join("engine-env"))
+}
+
+fn init_engine(app: &AppHandle) {
+    let _ = ENGINE.get_or_init(|| {
+        if let Some(dev) = dev_engine() {
+            return dev;
+        }
+        let code = app.path().resource_dir().map(|r| r.join("engine")).unwrap_or_default();
+        let env = installed_env(app).unwrap_or_default();
+        let py = if cfg!(windows) { env.join("python.exe") } else { env.join("bin").join("python3") };
+        (code, py)
+    });
+}
+
 fn engine_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("analysis")
+    ENGINE.get().map(|e| e.0.clone()).unwrap_or_default()
 }
 
 fn engine_python() -> PathBuf {
-    let venv = engine_dir().join(".venv");
-    if cfg!(windows) {
-        venv.join("Scripts").join("python.exe")
-    } else {
-        venv.join("bin").join("python")
-    }
+    ENGINE.get().map(|e| e.1.clone()).unwrap_or_default()
 }
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -67,9 +89,11 @@ fn run_engine(app: &AppHandle, job: &str, args: &[String], envs: &[(&str, String
 
 /// Like run_engine, but returns the `data` of the engine's final `{"event":"result"}` line.
 fn run_engine_result(app: &AppHandle, job: &str, args: &[String], envs: &[(&str, String)]) -> Result<Value, String> {
+    init_engine(app);
     let mut cmd = Command::new(engine_python());
     cmd.args(args)
         .current_dir(engine_dir())
+        .env("PYTHONPATH", engine_dir())
         .env("PYTHONIOENCODING", "utf-8")
         .env("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
         .stdout(Stdio::piped())
@@ -146,6 +170,115 @@ async fn app_ready(app: AppHandle) {
 
 async fn tokio_sleep(d: std::time::Duration) {
     let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(d)).await;
+}
+
+// ---------- engine setup (installed app, first launch) ----------
+
+#[tauri::command]
+fn engine_status(app: AppHandle) -> Value {
+    init_engine(&app);
+    let py = engine_python();
+    let ready = py.exists() && engine_dir().join("pulseframe_analysis").exists()
+        && (dev_engine().is_some() || installed_env(&app).map(|e| e.join(".ready")).is_some_and(|m| m.exists()));
+    json!({"ready": ready, "dev": dev_engine().is_some(), "gpu": has_nvidia_gpu(), "python": py.to_string_lossy()})
+}
+
+fn has_nvidia_gpu() -> bool {
+    let mut cmd = Command::new("nvidia-smi");
+    cmd.arg("-L").stdout(Stdio::piped()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    cmd.output().map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("GPU")).unwrap_or(false)
+}
+
+fn setup_step(app: &AppHandle, step: u32, total: u32, label: &str) {
+    let _ = app.emit("engine-setup", json!({"step": step, "total": total, "label": label}));
+}
+
+fn run_quiet(program: &str, args: &[&str], cwd: Option<&Path>) -> Result<(), String> {
+    let mut cmd = Command::new(program);
+    cmd.args(args).stdout(Stdio::null()).stderr(Stdio::piped());
+    if let Some(c) = cwd {
+        cmd.current_dir(c);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let out = cmd.output().map_err(|e| format!("Couldn't run {program}: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let e = String::from_utf8_lossy(&out.stderr);
+        Err(e.lines().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"))
+    }
+}
+
+const PY_EMBED: &str = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip";
+const GET_PIP: &str = "https://bootstrap.pypa.io/get-pip.py";
+
+/// One-time engine install for the packaged app (Windows): private Python 3.11 + pinned engine packages
+/// in local app data. GPU builds of PyTorch are used when an NVIDIA card is present. Resumable: each
+/// step is skipped if already done.
+#[tauri::command]
+async fn setup_engine(app: AppHandle) -> Result<Value, String> {
+    init_engine(&app);
+    if dev_engine().is_some() {
+        return Ok(json!({"ready": true, "dev": true}));
+    }
+    if !cfg!(windows) {
+        return Err("Automatic engine setup is Windows-only in this version.".into());
+    }
+    let env = installed_env(&app).ok_or("No app-data folder.")?;
+    let reqs = engine_dir().join("requirements-engine.txt");
+    tauri::async_runtime::spawn_blocking(move || {
+        let total = 5;
+        fs::create_dir_all(&env).map_err(err)?;
+        let py = env.join("python.exe");
+        let s = |p: &Path| p.to_string_lossy().to_string();
+        if !py.exists() {
+            setup_step(&app, 1, total, "Downloading Python (about 11 MB)");
+            let zip = env.join("python.zip");
+            run_quiet("curl.exe", &["-L", "--fail", "-o", &s(&zip), PY_EMBED], None)?;
+            run_quiet("tar.exe", &["-xf", &s(&zip)], Some(&env))?;
+            let _ = fs::remove_file(&zip);
+            // Embedded Python ignores site-packages until `import site` is enabled.
+            if let Some(pth) = fs::read_dir(&env).map_err(err)?.flatten().map(|e| e.path())
+                .find(|p| p.extension().and_then(|x| x.to_str()) == Some("_pth")) {
+                let body = fs::read_to_string(&pth).map_err(err)?.replace("#import site", "import site");
+                fs::write(&pth, format!("{body}\nLib\\site-packages\n")).map_err(err)?;
+            }
+        }
+        if !env.join("Scripts").join("pip.exe").exists() {
+            setup_step(&app, 2, total, "Installing the package manager");
+            let gp = env.join("get-pip.py");
+            run_quiet("curl.exe", &["-L", "--fail", "-o", &s(&gp), GET_PIP], None)?;
+            run_quiet(&s(&py), &[&s(&gp), "--no-warn-script-location"], Some(&env))?;
+            let _ = fs::remove_file(&gp);
+        }
+        let gpu = has_nvidia_gpu();
+        setup_step(&app, 3, total, if gpu { "Installing the audio engine for your NVIDIA GPU (about 3 GB)" } else { "Installing the audio engine (about 1 GB)" });
+        let mut torch = vec!["-m", "pip", "install", "--no-warn-script-location", "torch==2.6.0", "torchaudio==2.6.0"];
+        if gpu {
+            torch.extend(["--index-url", "https://download.pytorch.org/whl/cu124"]);
+        } else {
+            torch.extend(["--index-url", "https://download.pytorch.org/whl/cpu"]);
+        }
+        run_quiet(&s(&py), &torch, Some(&env))?;
+        setup_step(&app, 4, total, "Installing song analysis, lyrics and rendering components");
+        run_quiet(&s(&py), &["-m", "pip", "install", "--no-warn-script-location", "-r", &s(&reqs)], Some(&env))?;
+        if gpu {
+            run_quiet(&s(&py), &["-m", "pip", "install", "--no-warn-script-location", "nvidia-cublas-cu12", "nvidia-cudnn-cu12==9.*"], Some(&env))?;
+        }
+        setup_step(&app, 5, total, "Checking everything works");
+        run_quiet(&s(&py), &["-c", "import librosa, demucs, faster_whisper, openai, fal_client, pypdf, imageio_ffmpeg, PIL, yaml, keyring"], Some(&env))?;
+        fs::write(env.join(".ready"), "ok").map_err(err)?;
+        Ok(json!({"ready": true, "gpu": gpu}))
+    }).await.map_err(err)?
 }
 
 // ---------- keys ----------
@@ -793,6 +926,7 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            init_engine(app.handle());
             // Safety net: never leave the user staring at the splash if the UI fails to report ready.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -812,7 +946,7 @@ pub fn run() {
             key_status, set_key, delete_key, read_text, list_projects, create_project, load_project,
             analyze_project, direct_project, ensure_renderer, render_catalog, model_manifest, render_preview,
             queue_render, resolve_job, export_project, list_styles, set_look, app_ready, render_estimate,
-            save_project, save_project_as, launch_path, set_project_settings, import_reference, set_keyframe,
+            save_project, save_project_as, launch_path, engine_status, setup_engine, set_project_settings, import_reference, set_keyframe,
             creative_directions, write_treatment, director_command, undo_command
         ])
         .run(tauri::generate_context!())
@@ -864,6 +998,7 @@ mod tests {
 
     #[test]
     fn engine_python_exists() {
-        assert!(engine_python().exists(), "engine venv missing at {:?}", engine_python());
+        let (_, py) = dev_engine().expect("dev engine");
+        assert!(py.exists(), "engine venv missing at {:?}", py);
     }
 }

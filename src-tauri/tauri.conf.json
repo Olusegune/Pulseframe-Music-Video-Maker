@@ -72,7 +72,10 @@
       }
     ],
     "resources": {
-      "icons/document.ico": "document.ico"
+      "icons/document.ico": "document.ico",
+      "../analysis/pulseframe_analysis/*.py": "engine/pulseframe_analysis/",
+      "../analysis/pulseframe_analysis/styles.json": "engine/pulseframe_analysis/styles.json",
+      "../analysis/requirements-engine.txt": "engine/requirements-engine.txt"
     },
     "windows": {
       "nsis": {

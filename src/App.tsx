@@ -8,6 +8,7 @@ import { Analysis } from "./Analysis";
 import { Studio } from "./Studio";
 import { Settings } from "./Settings";
 import { HelpSheet } from "./Help";
+import { EngineSetup } from "./EngineSetup";
 import "./styles.css";
 
 type View =
@@ -22,6 +23,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [help, setHelp] = useState(false);
+  const [engine, setEngine] = useState<{ ready: boolean; gpu: boolean } | null>(null);
+  useEffect(() => { api.engineStatus().then(setEngine).catch(() => setEngine({ ready: true, gpu: false })); }, []);
   const say = useCallback((t: string) => { setToast(t); setTimeout(() => setToast(""), 1800); }, []);
 
   // First paint is done: swap the splash window for this one.
@@ -84,7 +87,8 @@ export default function App() {
 
   return (
     <>
-      {view.name === "home" && <Home onSong={setNewSong} onOpen={openProject} onChooseProject={chooseProject} onSettings={() => setSettings(true)} onHelp={() => setHelp(true)} />}
+      {engine && !engine.ready && <EngineSetup gpu={engine.gpu} onReady={() => setEngine({ ...engine, ready: true })} />}
+      {(!engine || engine.ready) && view.name === "home" && <Home onSong={setNewSong} onOpen={openProject} onChooseProject={chooseProject} onSettings={() => setSettings(true)} onHelp={() => setHelp(true)} />}
       {toast && <div className="toast glass mini" role="status">{toast}</div>}
       {view.name === "analysis" && <Analysis dir={view.dir} title={view.title}
                                              onDone={() => openProject(view.dir)} onBack={() => setView({ name: "home" })} />}

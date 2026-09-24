@@ -100,6 +100,8 @@ export type EngineEvent = { task: string; event: string; job?: unknown; stage?: 
 
 export const api = {
   appReady: () => invoke<void>("app_ready"),
+  engineStatus: () => invoke<{ ready: boolean; dev: boolean; gpu: boolean }>("engine_status"),
+  setupEngine: () => invoke<{ ready: boolean }>("setup_engine"),
   setProjectSettings: (dir: string, settings: Partial<ProjectSettings>) => invoke<void>("set_project_settings", { dir, settings }),
   importReference: (dir: string, path: string) =>
     invoke<{ ref: string; kind: string; name: string; path: string }>("import_reference", { dir, path }),

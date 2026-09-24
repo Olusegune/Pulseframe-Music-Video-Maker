@@ -36,6 +36,7 @@ export async function installMock() {
       case "list_styles": return fetch(url("styles.json")).then((r) => r.json()).then((j) => j.styles);
       case "set_look": return null;
       case "app_ready": return null;
+      case "engine_status": return { ready: true, dev: true, gpu: true };
       case "launch_path": return null;
       case "set_project_settings": return null;
       case "import_reference": return { ref: "project:assets/refs/sege-closeup.png", kind: "image", name: "sege-closeup.png", path: "" };
