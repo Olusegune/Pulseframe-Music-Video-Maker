@@ -407,6 +407,19 @@ async fn queue_render(app: AppHandle, dir: String, shots: Vec<String>, provider:
     Ok(made)
 }
 
+/// Cost estimate from live provider prices (free; fetches prices only).
+#[tauri::command]
+async fn render_estimate(app: AppHandle, dir: String, shots: Vec<String>, provider: String, model: Option<String>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut args = vec![dir, "--shots".into(), shots.join(","), "--provider".into(), provider];
+        if let Some(m) = model.filter(|m| !m.is_empty()) {
+            args.push("--model".into());
+            args.push(m);
+        }
+        run_engine_result(&app, "estimate", &render_args("estimate", &args), &provider_env())
+    }).await.map_err(err)?
+}
+
 #[tauri::command]
 async fn resolve_job(app: AppHandle, dir: String, job: String, action: String) -> Result<Value, String> {
     let app2 = app.clone();
@@ -470,7 +483,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             key_status, set_key, delete_key, read_text, list_projects, create_project, load_project,
             analyze_project, direct_project, ensure_renderer, render_catalog, model_manifest, render_preview,
-            queue_render, resolve_job, export_project, list_styles, set_look, app_ready
+            queue_render, resolve_job, export_project, list_styles, set_look, app_ready, render_estimate
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

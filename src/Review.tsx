@@ -85,7 +85,8 @@ export function ReviewSheet({ dir, shots, latest, keys, onSelect, onJobs, onClos
 
         {confirm && <ConfirmRender count={confirm.length} seconds={0} provider={latest.get(confirm[0])?.provider ?? defaultProvider(keys)}
                                    model="same model as the flagged take, with the reviewer's corrections"
-                                   onCancel={() => setConfirm(null)} onConfirm={() => fix(confirm)} />}
+                                   onCancel={() => setConfirm(null)} onConfirm={() => fix(confirm)}
+                                   dir={dir} shots={confirm} modelId={latest.get(confirm[0])?.model ?? null} />}
       </div>
     </div>
   );

@@ -194,7 +194,8 @@ export function Studio({ project, onHome, onSettings, onReload }: {
                                  rendered={shots.filter((s) => latest.get(s.id)?.state === "ready").length}
                                  onClose={() => setExporting(false)} />}
       {confirmAll && <ConfirmRender count={toRender.length} seconds={0} provider={defaultProvider(keys)}
-                                    model={AUTO_MODEL[defaultProvider(keys)]} onCancel={() => setConfirmAll(false)} onConfirm={renderAll} />}
+                                    model={AUTO_MODEL[defaultProvider(keys)]} onCancel={() => setConfirmAll(false)} onConfirm={renderAll}
+                                    dir={project.dir} shots={toRender.map((s) => s.id)} modelId={AUTO_MODEL[defaultProvider(keys)]} />}
       {job && (
         <div className="toast glass" role="status">
           <div className="t">{job.title}</div>

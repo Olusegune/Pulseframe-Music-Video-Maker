@@ -608,7 +608,11 @@ def _submit(d: str, store: Store, project: dict, p, j: dict) -> None:
     refs = _uploaded(d, p, _reference_files(d, project))
     payload = compile_request(shot, scene, plan, project, man, refs, j.get("overrides"), j.get("fix_notes"))
     # Persist intent BEFORE the billable call; the id is persisted the moment it returns.
-    store.update(j, state="submitting", payload=payload, attempts=j["attempts"] + 1)
+    try:
+        est = estimate_payload(j["provider"], j["model"], man, payload)
+    except Exception:
+        est = {"usd": None}
+    store.update(j, state="submitting", payload=payload, attempts=j["attempts"] + 1, estimate_usd=est.get("usd"))
     emit(event="progress", stage=f"sending {j['shot_id']} to {j['provider']}")
     sub = p.submit(j["model"], payload)
     store.update(j, state="submitted", provider_job_id=sub.pop("id"), provider_meta=sub, submitted=int(time.time()))
@@ -667,6 +671,80 @@ def review_pending(d: str) -> None:
             _review(d, store, j)
 
 
+# ---------------------------------------------------------------- cost estimates (PRD §57)
+
+RES_HEIGHT = {"480p": 480, "720p": 720, "1080p": 1080, "4k": 2160, "2160p": 2160}
+
+
+def _fal_price(model: str) -> dict | None:
+    key = os.environ.get("FAL_KEY")
+    if not key:
+        return None
+    cache_path = os.path.join(CACHE_DIR, "fal_prices.json")
+    cache = _read(cache_path, {})
+    hit = cache.get(model)
+    if hit and time.time() - hit["at"] < 86400:
+        return hit["price"]
+    r = requests.get("https://api.fal.ai/v1/models/pricing", params={"endpoint_id": model},
+                     headers={**UA, "Authorization": f"Key {key}"}, timeout=30)
+    price = next(iter(r.json().get("prices", [])), None) if r.ok else None
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    cache[model] = {"price": price, "at": int(time.time())}
+    _write(cache_path, cache)
+    return price
+
+
+def estimate_payload(provider: str, model: str, man: dict, payload: dict) -> dict:
+    """Best-effort USD estimate for one request. Returns {'usd': float|None, 'basis': str}."""
+    if provider != "fal":
+        return {"usd": None, "basis": "Kie bills in credits; the exact amount is shown after each render."}
+    price = _fal_price(model)
+    if not price:
+        return {"usd": None, "basis": "Price not published for this model."}
+    roles = man["roles"]
+    secs = float(str(payload.get(roles.get("duration", "duration"), 5)).rstrip("s") or 5)
+    unit, unit_price = price.get("unit", ""), float(price.get("unit_price", 0))
+    if "second" in unit:
+        return {"usd": round(unit_price * secs, 3), "basis": f"${unit_price}/s × {secs:g}s"}
+    if "token" in unit:
+        # ByteDance video tokens ≈ width × height × fps × seconds / 1024.
+        h = RES_HEIGHT.get(str(payload.get(roles.get("resolution", "resolution"), "720p")).lower(), 720)
+        m = re.match(r"^(\d+):(\d+)$", str(payload.get(roles.get("aspect_ratio", "aspect_ratio"), "16:9")))
+        ar = int(m.group(1)) / int(m.group(2)) if m else 16 / 9
+        w_px, h_px = (h * ar, h) if ar >= 1 else (h, h / ar)
+        tokens = w_px * h_px * 24 * secs / 1024
+        per = 1000 if "1000" in unit else 1_000_000 if "million" in unit.lower() else 1
+        return {"usd": round(tokens / per * unit_price, 3), "basis": f"≈{tokens / 1000:.0f}k tokens × ${unit_price}/{per:,} tokens"}
+    if any(u in unit for u in ("video", "request", "generation", "image")):
+        return {"usd": round(unit_price, 3), "basis": f"${unit_price} per {unit}"}
+    return {"usd": None, "basis": f"Billed per {unit}."}
+
+
+def estimate(d: str, shot_ids: list[str], provider: str, model: str | None) -> dict:
+    project = _read(os.path.join(d, "project.json"), {})
+    _, plan = _load_plan(d)
+    man = manifest(provider, model or AUTO[provider])
+    total, per, unknown = 0.0, [], 0
+    refs = [{"label": r["label"], "url": "x"} for r in _reference_files(d, project)]
+    for sid in shot_ids:
+        shot, scene = _shot(plan, sid)
+        e = estimate_payload(provider, man["model"], man, compile_request(shot, scene, plan, project, man, refs))
+        per.append({"shot_id": sid, **e})
+        if e["usd"] is None:
+            unknown += 1
+        else:
+            total += e["usd"]
+    out = {"provider": provider, "model": man["model"], "shots": len(shot_ids), "usd": round(total, 2) if not unknown else None,
+           "usd_known": round(total, 2), "unknown": unknown, "basis": per[0]["basis"] if per else ""}
+    if provider == "kie" and os.environ.get("KIE_KEY"):
+        try:
+            r = requests.get("https://api.kie.ai/api/v1/chat/credit", headers={**UA, "Authorization": f"Bearer {os.environ['KIE_KEY']}"}, timeout=20)
+            out["kie_credits"] = r.json().get("data")
+        except requests.RequestException:
+            pass
+    return out
+
+
 def resolve(d: str, job_id: str, action: str) -> dict:
     store = Store(d)
     j = next((x for x in store.jobs if x["id"] == job_id), None)
@@ -704,6 +782,8 @@ def main(argv: list[str]) -> int:
         s.add_argument("project"); s.add_argument("--shots", required=True); s.add_argument("--provider", required=True)
         s.add_argument("--model"); s.add_argument("--overrides", default="{}"); s.add_argument("--fix-notes", default="[]")
     r = sub.add_parser("run"); r.add_argument("project")
+    es = sub.add_parser("estimate"); es.add_argument("project"); es.add_argument("--shots", required=True)
+    es.add_argument("--provider", required=True); es.add_argument("--model")
     rs = sub.add_parser("resolve"); rs.add_argument("project"); rs.add_argument("--job", required=True)
     rs.add_argument("--action", choices=["retry", "dismiss", "accept"], required=True)
     a = p.parse_args(argv)
@@ -719,6 +799,8 @@ def main(argv: list[str]) -> int:
                                               json.loads(a.fix_notes)))
         elif a.cmd == "run":
             run(a.project)
+        elif a.cmd == "estimate":
+            emit(event="result", data=estimate(a.project, a.shots.split(","), a.provider, a.model))
         elif a.cmd == "resolve":
             emit(event="result", data=resolve(a.project, a.job, a.action))
     except SystemExit as e:

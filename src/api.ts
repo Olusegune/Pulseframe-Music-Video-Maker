@@ -48,6 +48,8 @@ export type Job = {
   created: number; updated: number; attempts: number; shot_start: number; shot_end: number; look?: string;
   fix_notes?: string[]; review?: Review;
 };
+export type Estimate = { provider: string; model: string; shots: number; usd: number | null; usd_known: number;
+  unknown: number; basis: string; kie_credits?: number };
 export type ReviewIssue = { kind: string; severity: "minor" | "major"; detail: string; fix: string };
 export type Review = {
   reviewed: boolean; status?: "good" | "minor" | "needs_attention"; summary?: string; issues?: ReviewIssue[];
@@ -100,6 +102,8 @@ export const api = {
   queueRender: (dir: string, shots: string[], provider: string, model: string | null, overrides: Record<string, unknown>,
                 fixNotes: string[] = []) =>
     invoke<Job[]>("queue_render", { dir, shots, provider, model, overrides, fixNotes }),
+  renderEstimate: (dir: string, shots: string[], provider: string, model: string | null) =>
+    invoke<Estimate>("render_estimate", { dir, shots, provider, model }),
   resolveJob: (dir: string, job: string, action: "retry" | "dismiss" | "accept") => invoke<Job>("resolve_job", { dir, job, action }),
   onRenderIdle: (fn: (e: { dir: string; error: string | null }) => void): Promise<UnlistenFn> =>
     listen<{ dir: string; error: string | null }>("render-idle", (e) => fn(e.payload)),

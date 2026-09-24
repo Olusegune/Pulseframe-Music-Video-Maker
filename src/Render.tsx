@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, AUTO_MODEL, errorText, type CatalogItem, type Job, type KeyStatus, type Manifest, type ManifestInput, type Shot } from "./api";
+import { api, AUTO_MODEL, errorText, type CatalogItem, type Estimate, type Job, type KeyStatus, type Manifest, type ManifestInput, type Shot } from "./api";
 import * as I from "./icons";
 import { needsAttention } from "./Review";
 
@@ -141,7 +141,8 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
       )}
 
       {confirm && <ConfirmRender count={1} seconds={Number(auto[manifest?.roles.duration ?? "duration"] ?? 0)}
-                                 provider={provider} model={modelTitle} onCancel={() => setConfirm(false)} onConfirm={send} />}
+                                 provider={provider} model={modelTitle} onCancel={() => setConfirm(false)} onConfirm={send}
+                                 dir={dir} shots={[shot.id]} modelId={model} />}
     </div>
   );
 }
@@ -207,22 +208,42 @@ function InputWidget({ f, value, onChange }: { f: ManifestInput; value: unknown;
 
 // ---------------------------------------------------------------- confirmation
 
-export function ConfirmRender({ count, seconds, provider, model, onCancel, onConfirm }: {
+export function ConfirmRender({ count, seconds, provider, model, onCancel, onConfirm, dir, shots, modelId }: {
   count: number; seconds: number; provider: string; model: string; onCancel: () => void; onConfirm: () => void;
+  dir?: string; shots?: string[]; modelId?: string | null;
 }) {
+  const [est, setEst] = useState<Estimate | null>(null);
+  const [estErr, setEstErr] = useState(false);
+  useEffect(() => {
+    if (!dir || !shots?.length) return;
+    api.renderEstimate(dir, shots, provider, modelId ?? null).then(setEst).catch(() => setEstErr(true));
+  }, [dir, shots, provider, modelId]);
+  const big = (est?.usd ?? 0) >= 25;
   return (
     <div className="overlay" onClick={onCancel}>
-      <div className="sheet glass" role="dialog" aria-label="Confirm render" onClick={(e) => e.stopPropagation()} style={{ width: "min(480px, calc(100vw - 32px))" }}>
+      <div className="sheet glass" role="dialog" aria-label="Confirm render" onClick={(e) => e.stopPropagation()} style={{ width: "min(500px, calc(100vw - 32px))" }}>
         <h2>Render {count === 1 ? "this shot" : `${count} shots`}?</h2>
         <p className="sub">
           {PROVIDER_NAME[provider]} · {model}<br />
-          {count === 1 && seconds ? `${seconds} s of video, trimmed to the beat in the edit. ` : ""}
-          {PROVIDER_NAME[provider]} bills your account for each render. PULSEFRAME sends each shot once and never
-          re-sends a render automatically.
+          {count === 1 && seconds ? `${seconds} s of video, trimmed to the beat in the edit.` : ""}
         </p>
+        <div className={`cost ${big ? "big" : ""}`}>
+          {!dir ? null : est ? (
+            est.usd != null ? <>
+              <div className="cost-n num">≈ ${est.usd.toFixed(2)}</div>
+              <div className="dim">{count > 1 ? `about $${(est.usd / count).toFixed(2)} per shot · ` : ""}{est.basis}</div>
+            </> : <>
+              <div className="cost-n">{provider === "kie" ? "Billed in Kie credits" : "Price not published"}</div>
+              <div className="dim">{est.basis}{est.kie_credits != null ? ` Balance: ${est.kie_credits.toLocaleString()} credits.` : ""}</div>
+            </>
+          ) : estErr ? <div className="dim">Couldn't fetch the price right now.</div> : <div className="dim">Checking price…</div>}
+        </div>
+        <p className="dim" style={{ marginTop: 10 }}>{PROVIDER_NAME[provider]} bills your account. PULSEFRAME sends each shot once and never
+          re-sends a render automatically.</p>
         <div className="sheet-actions">
           <button className="btn ghost" onClick={onCancel}>Cancel</button>
-          <button className="btn primary" onClick={onConfirm} autoFocus>Render</button>
+          <button className="btn primary" onClick={onConfirm} autoFocus={!big}>
+            {est?.usd != null ? `Render · ≈ $${est.usd.toFixed(2)}` : "Render"}</button>
         </div>
       </div>
     </div>
