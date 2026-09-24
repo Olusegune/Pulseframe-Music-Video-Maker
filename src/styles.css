@@ -329,3 +329,12 @@ select.text-input { appearance: auto; }
 .look-card .ld { font-size: 12px; color: var(--mist); line-height: 1.45; }
 .look-card .lf { font-size: 11px; color: var(--warning); }
 .look-advanced { border-top: 1px solid var(--line); padding-top: 14px; }
+
+/* ---------- splash ---------- */
+/* Solid from the first frame so nothing shows through; only the artwork fades in. */
+.splash { position: fixed; inset: 0; z-index: 100; background: #05070a; display: grid; place-items: center; cursor: pointer;
+  transition: opacity 500ms var(--ease); }
+.splash img { width: 100%; height: 100%; object-fit: cover; animation: splash-in 700ms var(--ease) both, splash-drift 2600ms var(--ease) both; }
+.splash.leaving { opacity: 0; pointer-events: none; }
+@keyframes splash-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes splash-drift { from { transform: scale(1.04) } to { transform: scale(1) } }
