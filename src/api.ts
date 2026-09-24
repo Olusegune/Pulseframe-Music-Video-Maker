@@ -58,9 +58,9 @@ export type Job = {
   created: number; updated: number; attempts: number; shot_start: number; shot_end: number; look?: string;
   fix_notes?: string[]; review?: Review;
 };
-export type ProjectSettings = { aspect_ratio: string; quality: "draft" | "standard" | "high" | "max"; lip_sync: "auto" | "off" };
+export type ProjectSettings = { aspect_ratio: string; quality: "draft" | "standard" | "high" | "max"; lip_sync: "auto" | "closeups" | "off" };
 export type Estimate = { provider: string; model: string; shots: number; usd: number | null; usd_known: number;
-  unknown: number; basis: string; kie_credits?: number };
+  unknown: number; basis: string; kie_credits?: number; lipsync_shots?: number };
 export type ReviewIssue = { kind: string; severity: "minor" | "major"; detail: string; fix: string };
 export type Review = {
   reviewed: boolean; status?: "good" | "minor" | "needs_attention"; summary?: string; issues?: ReviewIssue[];

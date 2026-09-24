@@ -593,7 +593,7 @@ fn set_project_settings(dir: String, settings: Value) -> Result<(), String> {
         patch.insert("quality".into(), json!(q));
     }
     if let Some(l) = settings["lip_sync"].as_str() {
-        patch.insert("lip_sync".into(), json!(if l == "off" { "off" } else { "auto" }));
+        patch.insert("lip_sync".into(), json!(match l { "off" => "off", "closeups" => "closeups", _ => "auto" }));
     }
     update_project(&d, Value::Object(patch))
 }

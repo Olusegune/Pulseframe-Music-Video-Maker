@@ -539,6 +539,7 @@ function ProjectSettingsRow({ project }: { project: LoadedProject }) {
         <span className="k">Lip-sync</span>
         <select className="text-input" value={s.lip_sync} onChange={(e) => change("lip_sync", e.target.value)}>
           <option value="auto">Auto · singing shots follow the vocal</option>
+          <option value="closeups">Close-ups get a dedicated lip-sync pass</option>
           <option value="off">Off</option>
         </select>
       </div>

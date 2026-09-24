@@ -269,6 +269,8 @@ export function ConfirmRender({ count, seconds, provider, model, onCancel, onCon
             est.usd != null ? <>
               <div className="cost-n num">≈ ${est.usd.toFixed(2)}</div>
               <div className="dim">{count > 1 ? `about $${(est.usd / count).toFixed(2)} per shot · ` : ""}{est.basis}</div>
+              {est.lipsync_shots ? <div className="dim">Includes a dedicated lip-sync pass for {est.lipsync_shots === 1 && count === 1 ? "this singing close-up"
+                : `${est.lipsync_shots} singing close-up${est.lipsync_shots > 1 ? "s" : ""}`}.</div> : null}
             </> : <>
               <div className="cost-n">{provider === "kie" ? "Billed in Kie credits" : provider === "google" ? "Billed by Google" : "Price not published"}</div>
               <div className="dim">{est.basis}{est.kie_credits != null ? ` Balance: ${est.kie_credits.toLocaleString()} credits.` : ""}</div>

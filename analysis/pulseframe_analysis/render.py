@@ -820,6 +820,22 @@ def _vocal_stem(d: str) -> str | None:
     return None
 
 
+CLOSE = re.compile(r"close|tight|\bcu\b|ecu|mcu|portrait|head and shoulders", re.I)
+
+
+def is_closeup(shot: dict) -> bool:
+    return bool(CLOSE.search(f"{shot.get('framing', '')} {shot.get('lens', '')}"))
+
+
+def wants_lipsync_pass(d: str, project: dict, plan: dict, shot: dict) -> bool:
+    """Project rule 'closeups': singing close-ups get a dedicated lip-sync pass after rendering."""
+    return project.get("lip_sync") == "closeups" and is_closeup(shot) and bool(singing(d, shot, plan))
+
+
+def _lipsync_provider() -> str | None:
+    return "fal" if os.environ.get("FAL_KEY") else "kie" if os.environ.get("KIE_KEY") else None
+
+
 def song_slice(d: str, shot: dict, seconds: float, vocals_only: bool = False) -> str:
     """The exact piece of the song under this shot as a small mp3 (full mix, or the isolated vocal)."""
     import subprocess
@@ -1066,6 +1082,29 @@ def _check(d: str, store: Store, p, j: dict) -> None:
                  cost=res.get("cost"), cost_unit=res.get("cost_unit"), finished=int(time.time()))
     if j.get("kind", "video") in ("video", "lipsync"):
         _review(d, store, j)
+    if j.get("kind", "video") == "video" and not j.get("lipsync_child"):
+        _auto_lipsync(d, store, j)
+
+
+def _auto_lipsync(d: str, store: Store, j: dict) -> None:
+    project = _read(os.path.join(d, "project.json"), {})
+    try:
+        plan = _read(os.path.join(d, f"{j['plan']}.json"), {})
+        shot, _ = _shot(plan, j["shot_id"])
+    except SystemExit:
+        return
+    prov = _lipsync_provider()
+    if not prov or not wants_lipsync_pass(d, project, plan, shot):
+        return
+    child = {"id": uuid.uuid4().hex[:12], "shot_id": j["shot_id"], "plan": j["plan"], "source_shots": j.get("source_shots", []),
+             "shot_start": j["shot_start"], "shot_end": j["shot_end"], "provider": prov, "model": AUTO_LIPSYNC[prov],
+             "kind": "lipsync", "source_job": j["id"], "auto": True, "overrides": {}, "fix_notes": [], "look": j.get("look"),
+             "state": "queued", "provider_job_id": None, "attempts": 0, "created": int(time.time()), "updated": int(time.time()),
+             "output": None, "error": None, "cost": None}
+    store.jobs.append(child)
+    store.update(j, lipsync_child=child["id"])
+    emit(event="job", job=child)
+    emit(event="progress", stage=f"{j['shot_id']} is a singing close-up: lip-sync pass queued")
 
 
 def _review(d: str, store: Store, j: dict) -> None:
@@ -1157,16 +1196,27 @@ def estimate(d: str, shot_ids: list[str], provider: str, model: str | None, kind
     man = manifest(provider, model or (AUTO_IMAGE if kind == "image" else AUTO)[provider])
     total, per, unknown = 0.0, [], 0
     refs = [{"label": r["label"], "url": "x"} for r in _reference_files(d, project, None)]
+    lip_prov = _lipsync_provider() if kind == "video" else None
+    lip_shots = 0
     for sid in shot_ids:
         shot, scene = _shot(plan, sid)
-        e = estimate_payload(provider, man["model"], man, compile_request(shot, scene, plan, project, man, refs))
+        payload = compile_request(shot, scene, plan, project, man, refs)
+        e = estimate_payload(provider, man["model"], man, payload)
+        if lip_prov and wants_lipsync_pass(d, project, plan, shot):
+            lip_shots += 1
+            lman = manifest(lip_prov, AUTO_LIPSYNC[lip_prov])
+            secs = payload.get(man["roles"].get("duration", "duration"), 5)
+            le = estimate_payload(lip_prov, lman["model"], {**lman, "roles": {**lman["roles"], "duration": "duration"}}, {"duration": secs})
+            if e["usd"] is not None and le["usd"] is not None:
+                e = {**e, "usd": round(e["usd"] + le["usd"], 3)}
         per.append({"shot_id": sid, **e})
         if e["usd"] is None:
             unknown += 1
         else:
             total += e["usd"]
     out = {"provider": provider, "model": man["model"], "shots": len(shot_ids), "usd": round(total, 2) if not unknown else None,
-           "usd_known": round(total, 2), "unknown": unknown, "basis": per[0]["basis"] if per else ""}
+           "usd_known": round(total, 2), "unknown": unknown, "basis": per[0]["basis"] if per else "",
+           "lipsync_shots": lip_shots}
     if provider == "kie" and os.environ.get("KIE_KEY"):
         try:
             r = requests.get("https://api.kie.ai/api/v1/chat/credit", headers={**UA, "Authorization": f"Bearer {os.environ['KIE_KEY']}"}, timeout=20)
