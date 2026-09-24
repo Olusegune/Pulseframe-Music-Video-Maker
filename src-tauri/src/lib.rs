@@ -184,6 +184,57 @@ fn delete_key(provider: String) -> Result<(), String> {
 }
 
 // ---------- projects ----------
+//
+// A project is a folder holding project.json and its media, plus a small `<Title>.pulseframe`
+// document file. Double-clicking that file (or choosing it in Open) opens the folder.
+
+const DOC_EXT: &str = "pulseframe";
+
+/// Accept either a project folder or its .pulseframe document and return the folder.
+fn project_dir(path: &str) -> Result<PathBuf, String> {
+    let p = PathBuf::from(path);
+    let dir = if p.is_file() { p.parent().map(Path::to_path_buf).unwrap_or(p) } else { p };
+    if dir.join("project.json").exists() {
+        Ok(dir)
+    } else {
+        Err("That isn't a PULSEFRAME project.".into())
+    }
+}
+
+/// Make sure the project has its double-clickable document file (older projects didn't).
+fn ensure_doc(dir: &Path) -> Option<PathBuf> {
+    if let Ok(rd) = fs::read_dir(dir) {
+        for e in rd.flatten() {
+            if e.path().extension().and_then(|x| x.to_str()) == Some(DOC_EXT) && e.path().is_file() {
+                return Some(e.path());
+            }
+        }
+    }
+    let title = read_json(&dir.join("project.json"))
+        .and_then(|p| p["title"].as_str().map(String::from))
+        .unwrap_or_else(|| "Untitled".into());
+    let doc = dir.join(format!("{}.{DOC_EXT}", slug(&title)));
+    let body = json!({"format": "pulseframe-project", "version": 1, "data": "project.json",
+                      "note": "Open this file with PULSEFRAME. The project's media lives in this folder."});
+    fs::write(&doc, serde_json::to_string_pretty(&body).ok()?).ok()?;
+    Some(doc)
+}
+
+fn recent_path(app: &AppHandle) -> Option<PathBuf> {
+    let d = app.path().app_data_dir().ok()?;
+    fs::create_dir_all(&d).ok()?;
+    Some(d.join("recent.json"))
+}
+
+fn remember(app: &AppHandle, dir: &Path) {
+    let Some(p) = recent_path(app) else { return };
+    let mut list: Vec<String> = read_json(&p).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+    let s = dir.to_string_lossy().to_string();
+    list.retain(|x| x != &s);
+    list.insert(0, s);
+    list.truncate(20);
+    let _ = write_json(&p, &json!(list));
+}
 
 /// Read a user-chosen text file (lyrics). Only reachable via the native file picker in the UI.
 #[tauri::command]
@@ -198,10 +249,19 @@ fn read_text(path: String) -> Result<String, String> {
 #[tauri::command]
 fn list_projects(app: AppHandle) -> Result<Vec<Value>, String> {
     let mut out = vec![];
-    for entry in fs::read_dir(projects_root(&app)?).map_err(err)?.flatten() {
-        let dir = entry.path();
+    let mut dirs: Vec<PathBuf> = fs::read_dir(projects_root(&app)?).map_err(err)?.flatten().map(|e| e.path()).collect();
+    if let Some(r) = recent_path(&app).and_then(|p| read_json(&p)) {
+        for d in r.as_array().into_iter().flatten().filter_map(|v| v.as_str()) {
+            let d = PathBuf::from(d);
+            if !dirs.contains(&d) {
+                dirs.push(d);
+            }
+        }
+    }
+    for dir in dirs {
+        let Ok(meta) = fs::metadata(dir.join("project.json")) else { continue };
         if let Some(mut p) = read_json(&dir.join("project.json")) {
-            let modified = entry.metadata().and_then(|m| m.modified()).ok()
+            let modified = meta.modified().ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs()).unwrap_or(0);
             p["dir"] = json!(dir.to_string_lossy());
@@ -218,10 +278,10 @@ fn create_project(app: AppHandle, song_path: String, title: String, lyrics: Opti
                   script_path: Option<String>, look: Option<Value>) -> Result<String, String> {
     let root = projects_root(&app)?;
     let base = slug(&title);
-    let mut dir = root.join(format!("{base}.pulseframe"));
+    let mut dir = root.join(&base);
     let mut n = 2;
     while dir.exists() {
-        dir = root.join(format!("{base} {n}.pulseframe"));
+        dir = root.join(format!("{base} {n}"));
         n += 1;
     }
     for sub in ["assets", "generations", "thumbnails", "cache", "exports"] {
@@ -249,12 +309,18 @@ fn create_project(app: AppHandle, song_path: String, title: String, lyrics: Opti
         project["script"] = json!(name);
     }
     write_json(&dir.join("project.json"), &project)?;
+    ensure_doc(&dir);
+    remember(&app, &dir);
     Ok(dir.to_string_lossy().into())
 }
 
 #[tauri::command]
-fn load_project(dir: String) -> Result<Value, String> {
-    let d = Path::new(&dir);
+fn load_project(app: AppHandle, dir: String) -> Result<Value, String> {
+    let resolved = project_dir(&dir)?;
+    let doc = ensure_doc(&resolved);
+    remember(&app, &resolved);
+    let dir = resolved.to_string_lossy().to_string();
+    let d = resolved.as_path();
     let project = read_json(&d.join("project.json")).ok_or("This project could not be opened.")?;
     let song = project["song"].as_str().map(|s| d.join(s).to_string_lossy().to_string());
     Ok(json!({
@@ -265,6 +331,7 @@ fn load_project(dir: String) -> Result<Value, String> {
         "production": read_json(&d.join("production.json")),
         "directed": read_json(&d.join("directed.json")),
         "jobs": read_json(&d.join("jobs.json")).map(|j| j["jobs"].clone()).unwrap_or(json!([])),
+        "doc": doc.map(|p| p.to_string_lossy().to_string()),
     }))
 }
 
@@ -431,6 +498,65 @@ async fn resolve_job(app: AppHandle, dir: String, job: String, action: String) -
     Ok(res)
 }
 
+// ---------- save / save as / launch ----------
+
+/// Everything is written to disk as you work; Save confirms that and stamps the project.
+#[tauri::command]
+fn save_project(dir: String) -> Result<Value, String> {
+    let d = project_dir(&dir)?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    update_project(&d, json!({"saved": now}))?;
+    Ok(json!({"saved": now}))
+}
+
+fn copy_tree(from: &Path, to: &Path, skip: &[&str]) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for e in fs::read_dir(from)?.flatten() {
+        let name = e.file_name();
+        let n = name.to_string_lossy();
+        if skip.contains(&n.as_ref()) || n.ends_with(".tmp") {
+            continue;
+        }
+        let (src, dst) = (e.path(), to.join(&name));
+        if src.is_dir() { copy_tree(&src, &dst, &[])? } else { fs::copy(&src, &dst).map(|_| ())? }
+    }
+    Ok(())
+}
+
+/// Save a copy under a new name/location chosen in the standard Save dialog (`dest` = "…/Name.pulseframe").
+/// Media and takes come along; caches and old exports don't. Returns the new project folder.
+#[tauri::command]
+async fn save_project_as(app: AppHandle, dir: String, dest: String) -> Result<String, String> {
+    let src = project_dir(&dir)?;
+    let dest = PathBuf::from(dest);
+    let title = dest.file_stem().and_then(|s| s.to_str()).map(String::from).ok_or("Choose a file name.")?;
+    let parent = dest.parent().ok_or("Choose a folder.")?.to_path_buf();
+    let new_dir = parent.join(slug(&title));
+    if new_dir.exists() && fs::read_dir(&new_dir).map(|mut r| r.next().is_some()).unwrap_or(false) {
+        return Err(format!("A folder named \"{}\" already exists there.", slug(&title)));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        copy_tree(&src, &new_dir, &["cache", "exports"]).map_err(|e| format!("Couldn't copy the project: {e}"))?;
+        fs::create_dir_all(new_dir.join("cache")).map_err(err)?;
+        fs::create_dir_all(new_dir.join("exports")).map_err(err)?;
+        for e in fs::read_dir(&new_dir).map_err(err)?.flatten() {
+            if e.path().extension().and_then(|x| x.to_str()) == Some(DOC_EXT) {
+                let _ = fs::remove_file(e.path());
+            }
+        }
+        update_project(&new_dir, json!({"title": title}))?;
+        ensure_doc(&new_dir);
+        remember(&app, &new_dir);
+        Ok(new_dir.to_string_lossy().to_string())
+    }).await.map_err(err)?
+}
+
+/// A .pulseframe file the app was launched with (double-click in Explorer), if any.
+#[tauri::command]
+fn launch_path() -> Option<String> {
+    std::env::args().skip(1).find(|a| a.to_lowercase().ends_with(&format!(".{DOC_EXT}")) || Path::new(a).join("project.json").exists())
+}
+
 // ---------- looks ----------
 
 #[tauri::command]
@@ -462,7 +588,51 @@ async fn export_project(app: AppHandle, dir: String, preset: String) -> Result<V
 pub fn run() {
     LAUNCHED.get_or_init(std::time::Instant::now);
     tauri::Builder::default()
+        // Double-clicking a project while the app is open focuses it and opens the project there.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.show();
+                let _ = main.unminimize();
+                let _ = main.set_focus();
+            }
+            if let Some(p) = args.iter().skip(1).find(|a| a.to_lowercase().ends_with(&format!(".{DOC_EXT}"))) {
+                let _ = app.emit("open-path", p.clone());
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
+        .menu(|app| {
+            use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+            let item = |id: &str, text: &str, accel: Option<&str>| {
+                let mut b = MenuItemBuilder::with_id(id, text);
+                if let Some(a) = accel {
+                    b = b.accelerator(a);
+                }
+                b.build(app)
+            };
+            let file = SubmenuBuilder::new(app, "File")
+                .item(&item("new", "New Music Video…", Some("CmdOrCtrl+N"))?)
+                .item(&item("open", "Open Project…", Some("CmdOrCtrl+O"))?)
+                .separator()
+                .item(&item("save", "Save", Some("CmdOrCtrl+S"))?)
+                .item(&item("save_as", "Save As…", Some("CmdOrCtrl+Shift+S"))?)
+                .separator()
+                .item(&item("export", "Export…", Some("CmdOrCtrl+E"))?)
+                .item(&item("reveal", "Show in Explorer", None)?)
+                .item(&item("close", "Close Project", Some("CmdOrCtrl+W"))?)
+                .separator()
+                .item(&item("settings", "Settings…", Some("CmdOrCtrl+,"))?)
+                .item(&PredefinedMenuItem::quit(app, Some("Exit"))?)
+                .build()?;
+            let view = SubmenuBuilder::new(app, "View")
+                .item(&item("mode_simple", "Simple Mode", Some("CmdOrCtrl+1"))?)
+                .item(&item("mode_director", "Director Mode", Some("CmdOrCtrl+2"))?)
+                .item(&item("inspector", "Toggle Inspector", Some("CmdOrCtrl+I"))?)
+                .build()?;
+            MenuBuilder::new(app).item(&file).item(&view).build()
+        })
+        .on_menu_event(|app, event| {
+            let _ = app.emit("menu", event.id().0.clone());
+        })
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Safety net: never leave the user staring at the splash if the UI fails to report ready.
@@ -483,10 +653,21 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             key_status, set_key, delete_key, read_text, list_projects, create_project, load_project,
             analyze_project, direct_project, ensure_renderer, render_catalog, model_manifest, render_preview,
-            queue_render, resolve_job, export_project, list_styles, set_look, app_ready, render_estimate
+            queue_render, resolve_job, export_project, list_styles, set_look, app_ready, render_estimate,
+            save_project, save_project_as, launch_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+fn load_project_data(d: &Path) -> Option<Value> {
+    Some(json!({
+        "project": read_json(&d.join("project.json"))?,
+        "song_map": read_json(&d.join("songmap.json")),
+        "production": read_json(&d.join("production.json")),
+        "song_path": d.join("song.wav").to_string_lossy(),
+    }))
 }
 
 #[cfg(test)]
@@ -513,7 +694,7 @@ mod tests {
     fn loads_a_real_project_when_present() {
         let Some(docs) = std::env::var_os("USERPROFILE").map(|h| PathBuf::from(h).join("Documents/PULSEFRAME/Exit Plan.pulseframe")) else { return };
         if !docs.exists() { return; }
-        let v = load_project(docs.to_string_lossy().into()).unwrap();
+        let v = load_project_data(&docs).unwrap();
         assert_eq!(v["project"]["title"], "Exit Plan");
         assert!(v["song_map"]["peaks"].as_array().unwrap().len() == 2000);
         let shots: usize = v["production"]["scenes"].as_array().unwrap().iter()

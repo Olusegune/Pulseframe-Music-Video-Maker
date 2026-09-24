@@ -351,3 +351,5 @@ select.text-input { appearance: auto; }
 .cost.big { border-color: rgba(230,183,90,0.45); }
 .cost-n { font: 600 22px var(--font-display); }
 .cost.big .cost-n { color: var(--warning); }
+
+.toast.mini { min-width: 0; padding: 10px 18px; bottom: 40px; font-weight: 600; }

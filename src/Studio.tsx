@@ -33,6 +33,18 @@ export function Studio({ project, onHome, onSettings, onReload }: {
   const [reviewing, setReviewing] = useState(false);
   const [look, setLook] = useState(normalizeLook(project.project.look));
   const styles = useStyles();
+  // Studio-level File/View menu items.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (id === "export" && plan) setExporting(true);
+      if (id === "mode_simple") setDirector(false);
+      if (id === "mode_director") setDirector(true);
+      if (id === "inspector") setInspector((v) => !v);
+    };
+    window.addEventListener("pf-menu", on);
+    return () => window.removeEventListener("pf-menu", on);
+  }, [plan]);
   const saveLook = async (l: typeof look) => {
     setLookOpen(false);
     try { await api.setLook(project.dir, l); setLook(l); } catch (e) { setError(errorText(e)); }

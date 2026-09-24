@@ -39,6 +39,7 @@ export type LoadedProject = {
   production: Plan | null;
   directed: Plan | null;
   jobs: Job[];
+  doc?: string | null;
 };
 export type JobState = "queued" | "submitting" | "submitted" | "ready" | "failed" | "uncertain" | "dismissed";
 export type Job = {
@@ -82,6 +83,11 @@ export type EngineEvent = { task: string; event: string; job?: unknown; stage?: 
 
 export const api = {
   appReady: () => invoke<void>("app_ready"),
+  saveProject: (dir: string) => invoke<{ saved: number }>("save_project", { dir }),
+  saveProjectAs: (dir: string, dest: string) => invoke<string>("save_project_as", { dir, dest }),
+  launchPath: () => invoke<string | null>("launch_path"),
+  onMenu: (fn: (id: string) => void): Promise<UnlistenFn> => listen<string>("menu", (e) => fn(e.payload)),
+  onOpenPath: (fn: (path: string) => void): Promise<UnlistenFn> => listen<string>("open-path", (e) => fn(e.payload)),
   keyStatus: () => invoke<KeyStatus>("key_status"),
   readText: (path: string) => invoke<string>("read_text", { path }),
   setKey: (provider: string, key: string) => invoke<void>("set_key", { provider, key }),

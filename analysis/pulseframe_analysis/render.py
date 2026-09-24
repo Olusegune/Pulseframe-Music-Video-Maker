@@ -530,8 +530,9 @@ def enqueue(d: str, shot_ids: list[str], provider: str, model: str | None, overr
     store = Store(d)
     made = []
     for sid in shot_ids:
-        if any(j["shot_id"] == sid and j["plan"] == plan_name and j["state"] in ACTIVE for j in store.jobs):
-            continue  # never double-queue a shot that is already rendering
+        if any(j["shot_id"] == sid and j["plan"] == plan_name and j["provider"] == provider and j["model"] == man["model"]
+               and j["state"] in ACTIVE for j in store.jobs):
+            continue  # never double-queue the same shot on the same model (side-by-side comparisons are fine)
         shot, scene = _shot(plan, sid)
         job = {"id": uuid.uuid4().hex[:12], "shot_id": sid, "plan": plan_name, "source_shots": shot.get("source_shots", []),
                "shot_start": shot["start"], "shot_end": shot["end"], "provider": provider, "model": man["model"],

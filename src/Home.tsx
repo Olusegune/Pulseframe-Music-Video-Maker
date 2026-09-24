@@ -6,8 +6,8 @@ import { Gear, Mark, Note } from "./icons";
 
 const AUDIO = ["mp3", "wav", "m4a"];
 
-export function Home({ onSong, onOpen, onSettings }: {
-  onSong: (path: string) => void; onOpen: (dir: string) => void; onSettings: () => void;
+export function Home({ onSong, onOpen, onChooseProject, onSettings }: {
+  onSong: (path: string) => void; onOpen: (dir: string) => void; onChooseProject: () => void; onSettings: () => void;
 }) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [over, setOver] = useState(false);
@@ -22,21 +22,19 @@ export function Home({ onSong, onOpen, onSettings }: {
       else if (p.type === "leave") setOver(false);
       else if (p.type === "drop") {
         setOver(false);
+        const proj = p.paths.find((f) => f.toLowerCase().endsWith(".pulseframe"));
         const song = p.paths.find((f) => AUDIO.includes(f.split(".").pop()!.toLowerCase()));
-        if (song) onSong(song);
+        if (proj) onOpen(proj);
+        else if (song) onSong(song);
         else setHint("PULSEFRAME accepts MP3, WAV or M4A songs.");
       }
     });
     return () => { un.then((f) => f()); };
-  }, [onSong]);
+  }, [onSong, onOpen]);
 
   const choose = async () => {
     const f = await open({ multiple: false, filters: [{ name: "Music", extensions: AUDIO }] });
     if (typeof f === "string") onSong(f);
-  };
-  const openExisting = async () => {
-    const f = await open({ directory: true });
-    if (typeof f === "string") onOpen(f);
   };
 
   return (
@@ -54,7 +52,7 @@ export function Home({ onSong, onOpen, onSettings }: {
           <button className="btn primary" onClick={choose}>Choose Music</button>
           <div className="hint">{hint || "MP3, WAV or M4A"}</div>
         </div>
-        <button className="btn ghost" onClick={openExisting}>Open Project</button>
+        <button className="btn ghost" onClick={onChooseProject}>Open Project</button>
       </div>
 
       {projects.length > 0 && (

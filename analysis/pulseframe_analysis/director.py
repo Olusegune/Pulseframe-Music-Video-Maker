@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 
 DEFAULT_MODEL = os.environ.get("PULSEFRAME_DIRECTOR_MODEL", "gpt-5")
@@ -162,6 +163,9 @@ def resolve_model(client, wanted: str) -> str:
         ids = {m.id for m in client.models.list()}
     except Exception:
         return wanted  # listing not permitted: let the call itself report problems
+    newer = sorted(i for i in ids if re.fullmatch(re.escape(wanted) + r"\.\d+", i))  # gpt-5 -> gpt-5.1
+    if newer:
+        return newer[-1]
     if wanted in ids:
         return wanted
     for family in PREFERRED:

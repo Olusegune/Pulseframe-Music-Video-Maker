@@ -58,6 +58,28 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "pulseframe"
+        ],
+        "name": "PULSEFRAME.Project",
+        "description": "PULSEFRAME music video project",
+        "role": "Editor",
+        "mimeType": "application/x-pulseframe"
+      }
+    ],
+    "resources": {
+      "icons/document.ico": "document.ico"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh",
+        "installerIcon": "icons/icon.ico"
+      }
+    },
+    "shortDescription": "Direct music into motion.",
+    "publisher": "PULSEFRAME"
   }
 }

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, errorText, type LoadedProject } from "./api";
 import { Home } from "./Home";
 import { NewProject } from "./NewProject";
@@ -17,6 +19,9 @@ export default function App() {
   const [newSong, setNewSong] = useState<string | null>(null);
   const [settings, setSettings] = useState(false);
   const [error, setError] = useState("");
+  const [toast, setToast] = useState("");
+  const say = useCallback((t: string) => { setToast(t); setTimeout(() => setToast(""), 1800); }, []);
+
   // First paint is done: swap the splash window for this one.
   useEffect(() => { api.appReady().catch(() => {}); }, []);
 
@@ -30,9 +35,54 @@ export default function App() {
     } catch (e) { setError(errorText(e)); }
   }, []);
 
+  // A project double-clicked in Explorer: at launch, or while the app is already open.
+  useEffect(() => {
+    api.launchPath().then((p) => { if (p) openProject(p); }).catch(() => {});
+    const un = api.onOpenPath((p) => openProject(p));
+    return () => { un.then((f) => f()); };
+  }, [openProject]);
+
+  const chooseProject = useCallback(async () => {
+    const f = await openDialog({ filters: [{ name: "PULSEFRAME Project", extensions: ["pulseframe"] }] });
+    if (typeof f === "string") openProject(f);
+  }, [openProject]);
+
+  // Standard File menu (native menu bar + shortcuts).
+  const current = view.name === "studio" ? view.project : null;
+  useEffect(() => {
+    const un = api.onMenu(async (id) => {
+      try {
+        switch (id) {
+          case "new": {
+            const f = await openDialog({ filters: [{ name: "Music", extensions: ["mp3", "wav", "m4a"] }] });
+            if (typeof f === "string") setNewSong(f);
+            break;
+          }
+          case "open": await chooseProject(); break;
+          case "settings": setSettings(true); break;
+          case "save":
+            if (current) { await api.saveProject(current.dir); say("Saved"); } else say("Open a project to save it.");
+            break;
+          case "save_as": {
+            if (!current) { say("Open a project first."); break; }
+            const dest = await saveDialog({ defaultPath: `${current.project.title} copy.pulseframe`,
+                                            filters: [{ name: "PULSEFRAME Project", extensions: ["pulseframe"] }] });
+            if (dest) { const dir = await api.saveProjectAs(current.dir, dest); await openProject(dir); say("Saved a copy"); }
+            break;
+          }
+          case "reveal": if (current) await revealItemInDir(current.doc ?? current.dir); break;
+          case "close": setView({ name: "home" }); break;
+          default: window.dispatchEvent(new CustomEvent("pf-menu", { detail: id })); // studio-level items
+        }
+      } catch (e) { setError(errorText(e)); }
+    });
+    return () => { un.then((f) => f()); };
+  }, [current, chooseProject, openProject, say]);
+
   return (
     <>
-      {view.name === "home" && <Home onSong={setNewSong} onOpen={openProject} onSettings={() => setSettings(true)} />}
+      {view.name === "home" && <Home onSong={setNewSong} onOpen={openProject} onChooseProject={chooseProject} onSettings={() => setSettings(true)} />}
+      {toast && <div className="toast glass mini" role="status">{toast}</div>}
       {view.name === "analysis" && <Analysis dir={view.dir} title={view.title}
                                              onDone={() => openProject(view.dir)} onBack={() => setView({ name: "home" })} />}
       {view.name === "studio" && <Studio project={view.project} onHome={() => setView({ name: "home" })}
