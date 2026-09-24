@@ -375,3 +375,25 @@ select.text-input { appearance: auto; }
 .still img { width: 100%; aspect-ratio: 21 / 9; object-fit: cover; border-radius: 8px; border: 2px solid transparent; }
 .still.approved img { border-color: var(--signal); }
 .still-wait { aspect-ratio: 21 / 9; border-radius: 8px; background: var(--carbon); display: grid; place-items: center; font-size: 12px; color: var(--mist); }
+
+/* ---------- creative directions ---------- */
+.directions { flex: 1; overflow-y: auto; padding: 28px 32px; }
+.dir-intro { max-width: 640px; margin: 8vh auto 0; }
+.dir-intro h2, .dir-head h2 { font: 600 26px var(--font-display); margin: 0 0 6px; }
+.dir-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.dir-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.dir-card { text-align: left; display: flex; flex-direction: column; gap: 8px; padding: 20px; border-radius: 18px; background: var(--carbon);
+  border: 1px solid var(--line); cursor: pointer; transition: all var(--t-micro) var(--ease); }
+.dir-card:hover { background: var(--graphite); }
+.dir-card.on { border: 2px solid var(--signal); padding: 19px; background: var(--graphite); }
+.dir-level { font-size: 11px; font-weight: 700; color: var(--gold); letter-spacing: 0.12em; text-transform: uppercase; }
+.dir-title { font: 600 21px var(--font-display); }
+.dir-premise { font-size: 14px; color: var(--frost); line-height: 1.5; }
+.dir-hero { font-size: 13px; color: var(--signal-bright); font-style: italic; line-height: 1.5; }
+.dir-row { font-size: 12.5px; color: var(--mist); line-height: 1.5; }
+.dir-row b { color: var(--frost); font-weight: 600; margin-right: 4px; }
+.dir-palette { display: flex; flex-wrap: wrap; gap: 4px; }
+.dir-palette i { font-style: normal; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--slate); color: var(--mist); }
+.dir-look { font-size: 12px; color: var(--smoke); }
+.dir-foot { display: flex; gap: 12px; align-items: center; margin-top: 18px; }
+.dir-foot .text-input { flex: 1; }

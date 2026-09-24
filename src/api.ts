@@ -42,6 +42,13 @@ export type LoadedProject = {
   jobs: Job[];
   doc?: string | null;
   keyframes?: Record<string, Record<string, string>>;
+  concepts?: { concepts: Concept[]; model?: string } | null;
+  treatment?: { concept: Concept; notes?: string } | null;
+};
+export type Concept = {
+  title: string; premise: string; mood: string; performance_approach: string; cinematic_style: string; palette: string[];
+  environment: string; wardrobe: string; movement: string; narrative_level: "performance" | "hybrid" | "narrative";
+  hero_frame: string; suggested_look: string;
 };
 export type JobState = "queued" | "submitting" | "submitted" | "ready" | "failed" | "uncertain" | "dismissed";
 export type Job = {
@@ -95,6 +102,9 @@ export const api = {
   setProjectSettings: (dir: string, settings: Partial<ProjectSettings>) => invoke<void>("set_project_settings", { dir, settings }),
   importReference: (dir: string, path: string) =>
     invoke<{ ref: string; kind: string; name: string; path: string }>("import_reference", { dir, path }),
+  creativeDirections: (dir: string, notes = "") => invoke<{ concepts: Concept[] }>("creative_directions", { dir, notes }),
+  writeTreatment: (dir: string, index: number, notes = "") =>
+    invoke<{ scenes: number; shots: number; title: string }>("write_treatment", { dir, index, notes }),
   saveProject: (dir: string) => invoke<{ saved: number }>("save_project", { dir }),
   saveProjectAs: (dir: string, dest: string) => invoke<string>("save_project_as", { dir, dest }),
   launchPath: () => invoke<string | null>("launch_path"),

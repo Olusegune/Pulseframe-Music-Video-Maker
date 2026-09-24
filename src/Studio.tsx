@@ -7,6 +7,7 @@ import { ExportSheet } from "./Export";
 import { LookPicker, lookName, normalizeLook, useStyles } from "./Looks";
 import { needsAttention, ReviewSheet } from "./Review";
 import { KeyframePanel } from "./Keyframe";
+import { CreativeDirections } from "./Directions";
 
 type Selection = { kind: "shot"; id: string } | { kind: "section"; index: number } | null;
 
@@ -169,7 +170,8 @@ export function Studio({ project, onHome, onSettings, onReload }: {
           <button className="icon-btn" onClick={() => setInspector((v) => !v)} title="Inspector" aria-label="Toggle inspector"><I.Panel /></button>
         </header>
 
-        <div className="viewer-wrap">
+        {!plan && <CreativeDirections project={project} onPlanned={onReload} onSettings={onSettings} />}
+        <div className="viewer-wrap" style={plan ? undefined : { display: "none" }}>
           <div className="stage">
           <div className="viewer" style={{ ["--ar" as string]: aspectNum(project.project.aspect_ratio) }}>
             {shown && latest.get(shown.id)?.state === "ready" && latest.get(shown.id)?.output ?

@@ -333,6 +333,8 @@ fn load_project(app: AppHandle, dir: String) -> Result<Value, String> {
         "jobs": read_json(&d.join("jobs.json")).map(|j| j["jobs"].clone()).unwrap_or(json!([])),
         "doc": doc.map(|p| p.to_string_lossy().to_string()),
         "keyframes": read_json(&d.join("keyframes.json")).unwrap_or(json!({})),
+        "concepts": read_json(&d.join("concepts.json")),
+        "treatment": read_json(&d.join("treatment.json")),
     }))
 }
 
@@ -663,6 +665,39 @@ fn set_look(dir: String, look: Value) -> Result<(), String> {
     update_project(Path::new(&dir), json!({ "look": look }))
 }
 
+// ---------- song-first creative development ----------
+
+fn openai_env() -> Result<Vec<(&'static str, String)>, String> {
+    let key = keyring::Entry::new(KEY_SERVICE, "openai").and_then(|e| e.get_password())
+        .map_err(|_| "Add your OpenAI key in Settings to develop creative directions.".to_string())?;
+    Ok(vec![("PULSEFRAME_OPENAI_KEY", key)])
+}
+
+/// Three distinct visual directions for the song (PRD §10).
+#[tauri::command]
+async fn creative_directions(app: AppHandle, dir: String, notes: Option<String>) -> Result<Value, String> {
+    let env = openai_env()?;
+    let d = project_dir(&dir)?.to_string_lossy().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_engine_result(&app, "concepts", &["-m".into(), "pulseframe_analysis.concepts".into(), "directions".into(), d,
+                                              "--notes".into(), notes.unwrap_or_default()], &env)
+    }).await.map_err(err)?
+}
+
+/// Develop the chosen direction into a treatment and a beat-timed shot plan (PRD §11–13).
+#[tauri::command]
+async fn write_treatment(app: AppHandle, dir: String, index: u32, notes: Option<String>) -> Result<Value, String> {
+    let env = openai_env()?;
+    let d = project_dir(&dir)?;
+    let ds = d.to_string_lossy().to_string();
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        run_engine_result(&app, "treatment", &["-m".into(), "pulseframe_analysis.concepts".into(), "treatment".into(), ds,
+                                               "--index".into(), index.to_string(), "--notes".into(), notes.unwrap_or_default()], &env)
+    }).await.map_err(err)??;
+    update_project(&d, json!({"state": "analyzed"}))?;
+    Ok(res)
+}
+
 // ---------- export ----------
 
 #[tauri::command]
@@ -742,7 +777,8 @@ pub fn run() {
             key_status, set_key, delete_key, read_text, list_projects, create_project, load_project,
             analyze_project, direct_project, ensure_renderer, render_catalog, model_manifest, render_preview,
             queue_render, resolve_job, export_project, list_styles, set_look, app_ready, render_estimate,
-            save_project, save_project_as, launch_path, set_project_settings, import_reference, set_keyframe
+            save_project, save_project_as, launch_path, set_project_settings, import_reference, set_keyframe,
+            creative_directions, write_treatment
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

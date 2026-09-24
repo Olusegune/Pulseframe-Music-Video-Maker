@@ -5,7 +5,8 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 export async function installMock() {
   // Sample data lives outside public/ so it never ships in the app bundle.
   const url = (f: string) => new URL(`../mock-data/${f}`, import.meta.url).href;
-  const [song_map, production, preview] = await Promise.all(["songmap.json", "production.json", "preview.json"].map((n) => fetch(url(n)).then((r) => r.json())));
+  const [song_map, production, preview, concepts] = await Promise.all(["songmap.json", "production.json", "preview.json", "concepts.json"].map((n) => fetch(url(n)).then((r) => r.json())));
+  const noScript = new URLSearchParams(location.search).get("mock") === "noscript";
   const now = Date.now() / 1000;
   const jobs = [
     { id: "j1", shot_id: "S01-01", plan: "production", provider: "fal", model: preview.manifest.model, state: "submitted", overrides: {}, provider_job_id: "r1", output: null, error: null, cost: null, created: now, updated: now, attempts: 1, shot_start: 0, shot_end: 2 },
@@ -22,7 +23,9 @@ export async function installMock() {
   mockIPC((cmd) => {
     switch (cmd) {
       case "list_projects": return [{ dir: "mock", title: "Exit Plan", state: "analyzed", modified: Date.now() / 1000, song: "song.wav" }];
-      case "load_project": return { dir: "mock", project, song_path: url("song.wav"), song_map, production, directed: null, jobs };
+      case "load_project": return noScript
+        ? { dir: "mock", project: { ...project, look: { style: "auto" } }, song_path: url("song.wav"), song_map, production: null, directed: null, jobs: [], concepts }
+        : { dir: "mock", project, song_path: url("song.wav"), song_map, production, directed: null, jobs };
       case "key_status": return { openai: false, fal: true, kie: false, google: false };
       case "set_keyframe": return null;
       case "render_preview": return preview;
