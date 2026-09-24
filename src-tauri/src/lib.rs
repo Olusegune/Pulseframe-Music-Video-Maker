@@ -189,7 +189,7 @@ fn list_projects(app: AppHandle) -> Result<Vec<Value>, String> {
 
 #[tauri::command]
 fn create_project(app: AppHandle, song_path: String, title: String, lyrics: Option<String>,
-                  script_path: Option<String>) -> Result<String, String> {
+                  script_path: Option<String>, look: Option<Value>) -> Result<String, String> {
     let root = projects_root(&app)?;
     let base = slug(&title);
     let mut dir = root.join(format!("{base}.pulseframe"));
@@ -209,6 +209,7 @@ fn create_project(app: AppHandle, song_path: String, title: String, lyrics: Opti
         "schema_version": 1, "title": title, "song": song, "source_song": song_path,
         "created": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
         "state": "new",
+        "look": look.unwrap_or_else(|| json!({"style": "auto"})),
     });
     if let Some(l) = lyrics.filter(|l| !l.trim().is_empty()) {
         fs::write(dir.join("lyrics.txt"), l).map_err(err)?;
@@ -387,6 +388,24 @@ async fn resolve_job(app: AppHandle, dir: String, job: String, action: String) -
     Ok(res)
 }
 
+// ---------- looks ----------
+
+#[tauri::command]
+fn list_styles() -> Result<Value, String> {
+    read_json(&engine_dir().join("pulseframe_analysis").join("styles.json"))
+        .map(|v| v["styles"].clone())
+        .ok_or_else(|| "The look library is missing.".into())
+}
+
+/// look: {"style": id, "notes"?: str, "prompt"?: str, "avoid"?: str}. Applies to every future render.
+#[tauri::command]
+fn set_look(dir: String, look: Value) -> Result<(), String> {
+    if !look["style"].is_string() {
+        return Err("Choose a look.".into());
+    }
+    update_project(Path::new(&dir), json!({ "look": look }))
+}
+
 // ---------- export ----------
 
 #[tauri::command]
@@ -404,7 +423,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             key_status, set_key, delete_key, read_text, list_projects, create_project, load_project,
             analyze_project, direct_project, ensure_renderer, render_catalog, model_manifest, render_preview,
-            queue_render, resolve_job, export_project
+            queue_render, resolve_job, export_project, list_styles, set_look
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

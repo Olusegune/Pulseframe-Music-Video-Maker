@@ -4,6 +4,7 @@ import * as I from "./icons";
 import { ACTIVE_STATES, ConfirmRender, defaultProvider, JobChip, latestJobs, RenderPanel } from "./Render";
 import { AUTO_MODEL, type Job, type KeyStatus } from "./api";
 import { ExportSheet } from "./Export";
+import { LookPicker, lookName, normalizeLook, useStyles } from "./Looks";
 
 type Selection = { kind: "shot"; id: string } | { kind: "section"; index: number } | null;
 
@@ -27,6 +28,13 @@ export function Studio({ project, onHome, onSettings, onReload }: {
   const [keys, setKeys] = useState<KeyStatus>({ openai: false, fal: false, kie: false });
   const [confirmAll, setConfirmAll] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [lookOpen, setLookOpen] = useState(false);
+  const [look, setLook] = useState(normalizeLook(project.project.look));
+  const styles = useStyles();
+  const saveLook = async (l: typeof look) => {
+    setLookOpen(false);
+    try { await api.setLook(project.dir, l); setLook(l); } catch (e) { setError(errorText(e)); }
+  };
   const planName = project.directed ? "directed" : "production";
   const latest = useMemo(() => latestJobs(jobs, planName), [jobs, planName]);
 
@@ -166,14 +174,16 @@ export function Studio({ project, onHome, onSettings, onReload }: {
 
       <aside className={`inspector ${inspector ? "" : "collapsed"}`} aria-label="Inspector">
         <Inspector sel={sel} shots={shots} scenes={scenes} map={map} plan={plan} director={director} project={project}
-                   onClose={() => setSel(null)}
+                   onClose={() => setSel(null)} lookLabel={lookName(styles, look)} onLook={() => setLookOpen(true)}
                    renderPanel={(s: Shot) => <RenderPanel dir={project.dir} shot={s} jobs={jobs.filter((j) => j.plan === planName)}
-                                                          director={director} keys={keys} onQueued={mergeJobs} onSettings={onSettings} />} />
+                                                          director={director} keys={keys} onQueued={mergeJobs} onSettings={onSettings}
+                                                          lookId={look.style} />} />
       </aside>
 
       <Timeline map={map} shots={shots} time={time} sel={sel} flagged={flagged} latest={latest}
                 onSeek={seek} onSelect={(s) => { setSel(s); if (s?.kind === "shot") { const sh = shots.find((x) => x.id === s.id); if (sh) seek(sh.start); } }} />
 
+      {lookOpen && <LookPicker value={look} director={director} onCancel={() => setLookOpen(false)} onSave={saveLook} />}
       {exporting && <ExportSheet dir={project.dir} projectAspect={project.project.aspect_ratio} shots={shots.length}
                                  rendered={shots.filter((s) => latest.get(s.id)?.state === "ready").length}
                                  onClose={() => setExporting(false)} />}
@@ -253,9 +263,9 @@ function Storyboard({ shot, scene, job, hidden }: { shot: Shot; scene?: Scene; j
 
 // ---------------- inspector ----------------
 
-function Inspector({ sel, shots, scenes, map, plan, director, project, onClose, renderPanel }: {
+function Inspector({ sel, shots, scenes, map, plan, director, project, onClose, renderPanel, lookLabel, onLook }: {
   sel: Selection; shots: Shot[]; scenes: Scene[]; map: SongMap | null; plan: Plan | null; director: boolean;
-  project: LoadedProject; onClose: () => void; renderPanel: (s: Shot) => React.ReactNode;
+  project: LoadedProject; onClose: () => void; renderPanel: (s: Shot) => React.ReactNode; lookLabel: string; onLook: () => void;
 }) {
   if (sel?.kind === "shot") {
     const s = shots.find((x) => x.id === sel.id);
@@ -293,6 +303,10 @@ function Inspector({ sel, shots, scenes, map, plan, director, project, onClose, 
           <span className="k">Shots</span><span className="v num">{shots.length}</span>
           <span className="k">Renderer</span><span className="v">Auto</span>
         </div></div>
+        <div className="insp-section look-row">
+          <h4>Look</h4>
+          <div className="file-row"><span className="name">{lookLabel}</span><button className="btn ghost small" onClick={onLook}>Change</button></div>
+        </div>
         {plan?.meta?.LOGLINE && <div className="insp-section"><h4>Story</h4><p className="prose">{plan.meta.LOGLINE}</p></div>}
         {plan?.meta?.["VISUAL STYLE"] && <div className="insp-section"><h4>Look</h4><p className="prose">{plan.meta["VISUAL STYLE"]}</p></div>}
         {plan?.characters?.length ? <div className="insp-section"><h4>Cast</h4>

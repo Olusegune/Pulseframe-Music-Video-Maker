@@ -34,9 +34,9 @@ export const defaultProvider = (keys: KeyStatus) => (keys.fal ? "fal" : keys.kie
 
 // ---------------------------------------------------------------- inspector panel
 
-export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSettings }: {
+export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSettings, lookId }: {
   dir: string; shot: Shot; jobs: Job[]; director: boolean; keys: KeyStatus;
-  onQueued: (jobs: Job[]) => void; onSettings: () => void;
+  onQueued: (jobs: Job[]) => void; onSettings: () => void; lookId: string;
 }) {
   const [provider, setProvider] = useState(defaultProvider(keys));
   const [model, setModel] = useState(AUTO_MODEL[defaultProvider(keys)]);
@@ -68,7 +68,7 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
       .catch((e) => live && setError(errorText(e)))
       .finally(() => live && setBusy(""));
     return () => { live = false; };
-  }, [dir, shot.id, provider, model, settled]);
+  }, [dir, shot.id, provider, model, settled, lookId]);
 
   const send = async () => {
     setConfirm(false); setBusy("Queuing…"); setError("");
@@ -120,6 +120,8 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
             <div key={j.id} className="take">
               <div className="take-top"><JobChip job={j} /><span className="dim num">{PROVIDER_NAME[j.provider]} · {shortModel(j.model)}</span></div>
               {j.error && <div className="take-err">{j.error}</div>}
+              {j.state === "ready" && j.look && j.look !== lookId &&
+                <div className="take-err" style={{ color: "var(--warning)" }}>Rendered in an earlier look. Render a new take to match.</div>}
               {j.cost != null && <div className="dim num">Cost: {j.cost} {j.cost_unit ?? ""}</div>}
               {(j.state === "failed" || j.state === "uncertain") && (
                 <div className="take-actions">

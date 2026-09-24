@@ -33,7 +33,7 @@ export type Plan = { meta: Record<string, string>; characters: Character[]; scen
 export type ProjectSummary = { dir: string; title: string; state: string; modified: number; song: string };
 export type LoadedProject = {
   dir: string;
-  project: { title: string; state: string; song: string; lyrics?: string; script?: string; aspect_ratio?: string; artist?: string };
+  project: { title: string; state: string; song: string; lyrics?: string; script?: string; aspect_ratio?: string; artist?: string; look?: Look | string };
   song_path: string | null;
   song_map: SongMap | null;
   production: Plan | null;
@@ -45,7 +45,7 @@ export type Job = {
   id: string; shot_id: string; plan: string; provider: "fal" | "kie"; model: string; state: JobState;
   overrides: Record<string, unknown>; payload?: Record<string, unknown>; provider_job_id: string | null;
   output: string | null; error: string | null; cost: number | null; cost_unit?: string | null;
-  created: number; updated: number; attempts: number; shot_start: number; shot_end: number;
+  created: number; updated: number; attempts: number; shot_start: number; shot_end: number; look?: string;
 };
 export type ManifestInput = {
   name: string; type: string; items: string | null; enum: (string | number)[] | null; default: unknown;
@@ -61,6 +61,9 @@ export const AUTO_MODEL: Record<string, string> = {
   kie: "bytedance/seedance-2",
 };
 
+export type Style = { id: string; name: string; group: string; description: string; prompt: string; avoid: string; fit?: string };
+export type Look = { style: string; notes?: string; prompt?: string; avoid?: string };
+
 export type ExportResult = {
   path: string; preset: string; width: number; height: number; fps: number; duration: number;
   shots: number; rendered: number; draft: boolean;
@@ -75,8 +78,10 @@ export const api = {
   setKey: (provider: string, key: string) => invoke<void>("set_key", { provider, key }),
   deleteKey: (provider: string) => invoke<void>("delete_key", { provider }),
   listProjects: () => invoke<ProjectSummary[]>("list_projects"),
-  createProject: (songPath: string, title: string, lyrics: string | null, scriptPath: string | null) =>
-    invoke<string>("create_project", { songPath, title, lyrics, scriptPath }),
+  createProject: (songPath: string, title: string, lyrics: string | null, scriptPath: string | null, look: Look | null) =>
+    invoke<string>("create_project", { songPath, title, lyrics, scriptPath, look }),
+  listStyles: () => invoke<Style[]>("list_styles"),
+  setLook: (dir: string, look: Look) => invoke<void>("set_look", { dir, look }),
   loadProject: (dir: string) => invoke<LoadedProject>("load_project", { dir }),
   analyzeProject: (dir: string) => invoke<void>("analyze_project", { dir }),
   directProject: (dir: string) => invoke<void>("direct_project", { dir }),

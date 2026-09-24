@@ -186,6 +186,28 @@ def _slug_from_doc(doc: str) -> str:
     return doc.split("/market/")[1].removesuffix(".md")
 
 
+# ---------------------------------------------------------------- looks
+
+STYLES_PATH = os.path.join(os.path.dirname(__file__), "styles.json")
+
+
+def styles() -> dict[str, dict]:
+    with open(STYLES_PATH, encoding="utf-8") as f:
+        return {s["id"]: s for s in json.load(f)["styles"]}
+
+
+def resolve_look(project: dict) -> dict:
+    """Project look -> {'id', 'prompt', 'avoid'}. Custom wording (Director Mode) overrides the library's."""
+    look = project.get("look") or {"style": "auto"}
+    if isinstance(look, str):  # early projects stored free text
+        return {"id": "custom", "prompt": look, "avoid": ""}
+    base = styles().get(look.get("style", "auto"), styles()["auto"])
+    prompt = look.get("prompt") or base["prompt"]
+    if look.get("notes"):
+        prompt = f"{prompt} {look['notes'].strip()}"
+    return {"id": base["id"], "prompt": prompt, "avoid": look.get("avoid") if look.get("avoid") is not None else base["avoid"]}
+
+
 # ---------------------------------------------------------------- compile: Shot Contract -> request
 
 def _nearest_aspect(options: list[str] | None, ratio: float) -> str | None:
@@ -233,17 +255,18 @@ def compile_request(shot: dict, scene: dict | None, plan: dict, project: dict, m
                                                    if shot.get("camera_movement") or shot.get("camera_moves") else "") + ".")
     if shot.get("lighting"):
         parts.append(f"Lighting: {shot['lighting']}")
-    look = project.get("look")
-    if look:  # the project's chosen rendering look wins over the script's descriptive style
-        parts.append(f"Look: {look}")
+    look = resolve_look(project)  # the same look wording goes into every shot of the project
+    parts.append(f"Look: {look['prompt']}")
     if style:
-        parts.append(f"{'Mood and colour' if look else 'Style'}: {style}")
+        parts.append(f"Mood and colour: {style}")
     image_refs = refs[: fields[roles["ref_images"]].get("max_items") or len(refs)] if "ref_images" in roles else []
     if image_refs:
         ordinal = ["first", "second", "third", "fourth", "fifth", "sixth"]
         tags = [f"{man['ref_syntax'].format(n=i + 1)} is the {r['label']}" if man.get("ref_syntax")
                 else f"the {ordinal[min(i, 5)]} reference image is the {r['label']}" for i, r in enumerate(image_refs)]
         parts.append("References: " + "; ".join(tags) + ". Match the characters' faces, hair and wardrobe exactly.")
+    if look["avoid"] and "negative_prompt" not in roles:
+        parts.append(f"Avoid: {look['avoid']}.")
     parts.append("No on-screen text, no subtitles, no watermark. Performers do not lip-sync.")
     payload[roles.get("prompt", "prompt")] = " ".join(p.strip() for p in parts if p)
 
@@ -264,6 +287,8 @@ def compile_request(shot: dict, scene: dict | None, plan: dict, project: dict, m
     if "resolution" in roles:
         opts = fields[roles["resolution"]].get("enum") or []
         payload[roles["resolution"]] = "720p" if "720p" in opts else fields[roles["resolution"]].get("default") or (opts[0] if opts else None)
+    if look["avoid"] and "negative_prompt" in roles:
+        payload[roles["negative_prompt"]] = f"{look['avoid']}, text, subtitles, watermark"
     if "audio" in roles:
         payload[roles["audio"]] = False  # the song is the master audio track (PRD §3)
     for k, v in (overrides or {}).items():  # Director Mode pins always win
@@ -507,7 +532,7 @@ def enqueue(d: str, shot_ids: list[str], provider: str, model: str | None, overr
         shot, scene = _shot(plan, sid)
         job = {"id": uuid.uuid4().hex[:12], "shot_id": sid, "plan": plan_name, "source_shots": shot.get("source_shots", []),
                "shot_start": shot["start"], "shot_end": shot["end"], "provider": provider, "model": man["model"],
-               "overrides": overrides or {}, "state": "queued", "provider_job_id": None, "attempts": 0,
+               "overrides": overrides or {}, "look": resolve_look(project)["id"], "state": "queued", "provider_job_id": None, "attempts": 0,
                "created": int(time.time()), "updated": int(time.time()), "output": None, "error": None, "cost": None}
         store.jobs.append(job)
         made.append(job)

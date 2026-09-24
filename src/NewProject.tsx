@@ -2,6 +2,8 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText } from "./api";
 import { Close, Note, Script } from "./icons";
+import { LookPicker, lookName, useStyles } from "./Looks";
+import type { Look } from "./api";
 
 const baseName = (p: string) => p.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, "");
 
@@ -14,6 +16,9 @@ export function NewProject({ songPath, onCancel, onCreated }: {
   const [script, setScript] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [look, setLook] = useState<Look>({ style: "auto" });
+  const [picking, setPicking] = useState(false);
+  const styles = useStyles();
 
   const loadLyrics = async () => {
     const f = await open({ filters: [{ name: "Lyrics", extensions: ["txt", "lrc"] }] });
@@ -26,7 +31,7 @@ export function NewProject({ songPath, onCancel, onCreated }: {
   const create = async () => {
     setBusy(true); setError("");
     try {
-      onCreated(await api.createProject(songPath, title.trim() || "Untitled", lyrics || null, script));
+      onCreated(await api.createProject(songPath, title.trim() || "Untitled", lyrics || null, script, look));
     } catch (e) { setError(errorText(e)); setBusy(false); }
   };
 
@@ -62,6 +67,14 @@ export function NewProject({ songPath, onCancel, onCreated }: {
               <button className="btn ghost" onClick={() => setScript(null)}>Remove</button></div>
           ) : <button className="btn" onClick={chooseScript}><Script size={18} /> Add script</button>}
         </div>
+
+        <div className="field">
+          <label>Look <span className="opt">Optional · applied to every shot</span></label>
+          <div className="file-row"><span className="name">{lookName(styles, look)}</span>
+            <button className="btn ghost" onClick={() => setPicking(true)}>Change</button></div>
+        </div>
+        {picking && <LookPicker value={look} director={false} onCancel={() => setPicking(false)}
+                                onSave={(l) => { setLook(l); setPicking(false); }} />}
 
         {error && <div className="error-text">{error}</div>}
         <div className="sheet-actions">

@@ -315,3 +315,17 @@ select.text-input { appearance: auto; }
 .preset .rec { color: var(--gold); font-weight: 500; }
 .preset .ps { font-size: 11px; color: var(--smoke); }
 .export-done { margin-top: 16px; padding: 12px 14px; border-radius: 10px; background: var(--carbon); border: 1px solid var(--line); }
+
+/* ---------- looks ---------- */
+.look-sheet { width: min(860px, calc(100vw - 32px)); }
+.look-scroll { max-height: 46vh; overflow-y: auto; padding-right: 4px; }
+.look-group h4 { margin: 4px 0 8px; font-size: 11.5px; font-weight: 600; color: var(--smoke); letter-spacing: 0.12em; text-transform: uppercase; }
+.look-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-bottom: 16px; }
+.look-card { text-align: left; display: flex; flex-direction: column; gap: 4px; padding: 11px 12px; border-radius: 10px;
+  background: var(--carbon); border: 1px solid var(--line); cursor: pointer; transition: all var(--t-micro) var(--ease); }
+.look-card:hover { background: var(--graphite); border-color: var(--line-strong); }
+.look-card.on { border: 2px solid var(--signal); padding: 10px 11px; background: var(--graphite); }
+.look-card .ln { font-weight: 600; font-size: 13.5px; }
+.look-card .ld { font-size: 12px; color: var(--mist); line-height: 1.45; }
+.look-card .lf { font-size: 11px; color: var(--warning); }
+.look-advanced { border-top: 1px solid var(--line); padding-top: 14px; }
