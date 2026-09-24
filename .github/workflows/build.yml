@@ -1,0 +1,122 @@
+name: Build
+
+# checks + engine test on every push; installers on version tags (v*) or on demand
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      installers:
+        description: "Build Windows and macOS installers"
+        type: boolean
+        default: true
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Checks (TypeScript, Rust, Python)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vite build
+      - name: Linux libraries for Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: python -m compileall -q analysis/pulseframe_analysis
+
+  engine:
+    name: Engine install + analysis (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install PyTorch (CPU on Windows; default wheels on macOS)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+          else
+            pip install torch==2.6.0 torchaudio==2.6.0
+          fi
+      - name: Install pinned engine packages (same list the app installs)
+        run: pip install -r analysis/requirements-engine.txt
+      - name: Imports
+        working-directory: analysis
+        run: python -c "import librosa, demucs, faster_whisper, openai, fal_client, pypdf, imageio_ffmpeg, PIL, yaml, keyring, pulseframe_analysis.render, pulseframe_analysis.concepts, pulseframe_analysis.command; print('imports ok')"
+      - name: Analyse a generated test song (known answer: 120 BPM, 6 sections)
+        working-directory: analysis
+        shell: bash
+        run: |
+          python make_test_song.py test.wav
+          python -m pulseframe_analysis test.wav --out sm.json > /dev/null
+          python - <<'EOF'
+          import json
+          m = json.load(open("sm.json"))
+          labels = [s["label"] for s in m["sections"]]
+          print("bpm", m["bpm"], labels)
+          assert abs(m["bpm"] - 120) < 1, m["bpm"]
+          assert labels == ["INTRO", "VERSE", "CHORUS", "VERSE", "CHORUS", "OUTRO"], labels
+          EOF
+
+  installers:
+    name: Installer (${{ matrix.label }})
+    needs: [checks]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.installers)
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: "Windows x64", os: windows-latest, args: "" }
+          - { label: "macOS Apple Silicon", os: macos-latest, args: "--target aarch64-apple-darwin" }
+          - { label: "macOS Intel", os: macos-latest, args: "--target x86_64-apple-darwin" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ contains(matrix.os, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+      - run: npm ci
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional code signing: add these repository secrets when you have the certificates.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'build-__VERSION__' }}
+          releaseName: "PULSEFRAME __VERSION__"
+          releaseBody: "Windows: run the .exe setup. macOS: open the .dmg for your Mac (Apple Silicon or Intel). Unsigned builds show a security warning until code signing is set up."
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}

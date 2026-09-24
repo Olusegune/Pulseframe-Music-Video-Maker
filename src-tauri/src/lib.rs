@@ -47,7 +47,7 @@ fn init_engine(app: &AppHandle) {
         }
         let code = app.path().resource_dir().map(|r| r.join("engine")).unwrap_or_default();
         let env = installed_env(app).unwrap_or_default();
-        let py = if cfg!(windows) { env.join("python.exe") } else { env.join("bin").join("python3") };
+        let py = env_python(&env);
         link_engine_code(&env, &code);
         (code, py)
     });
@@ -55,8 +55,16 @@ fn init_engine(app: &AppHandle) {
 
 /// The embedded interpreter ignores PYTHONPATH, so register the engine code with it via a .pth file.
 /// Refreshed on every launch in case the app was moved or updated.
+fn env_python(env: &Path) -> PathBuf {
+    if cfg!(windows) { env.join("python.exe") } else { env.join("python").join("bin").join("python3") }
+}
+
+fn site_packages(env: &Path) -> PathBuf {
+    if cfg!(windows) { env.join("Lib").join("site-packages") } else { env.join("python").join("lib").join("python3.11").join("site-packages") }
+}
+
 fn link_engine_code(env: &Path, code: &Path) {
-    let sp = env.join("Lib").join("site-packages");
+    let sp = site_packages(env);
     if sp.exists() {
         let want = code.to_string_lossy().to_string();
         let pth = sp.join("pulseframe_engine.pth");
@@ -232,6 +240,22 @@ fn run_quiet(program: &str, args: &[&str], cwd: Option<&Path>) -> Result<(), Str
     }
 }
 
+/// Standalone CPython for macOS (python-build-standalone). Newest 3.11 build, or a known-good fallback.
+fn mac_python_url() -> String {
+    let arch = if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" };
+    let fallback = format!("https://github.com/astral-sh/python-build-standalone/releases/download/20260924/\
+cpython-3.11.16+20260924-{arch}-apple-darwin-install_only.tar.gz");
+    let out = Command::new("curl").args(["-sL", "--fail", "-H", "User-Agent: PULSEFRAME",
+        "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest"]).output();
+    let Ok(o) = out else { return fallback };
+    let Ok(v) = serde_json::from_slice::<Value>(&o.stdout) else { return fallback };
+    let want = format!("{arch}-apple-darwin-install_only.tar.gz");
+    v["assets"].as_array().into_iter().flatten()
+        .filter_map(|a| Some((a["name"].as_str()?, a["browser_download_url"].as_str()?)))
+        .find(|(n, _)| n.starts_with("cpython-3.11.") && n.ends_with(&want))
+        .map(|(_, u)| u.to_string()).unwrap_or(fallback)
+}
+
 const PY_EMBED: &str = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip";
 const GET_PIP: &str = "https://bootstrap.pypa.io/get-pip.py";
 
@@ -244,17 +268,22 @@ async fn setup_engine(app: AppHandle) -> Result<Value, String> {
     if dev_engine().is_some() {
         return Ok(json!({"ready": true, "dev": true}));
     }
-    if !cfg!(windows) {
-        return Err("Automatic engine setup is Windows-only in this version.".into());
-    }
     let env = installed_env(&app).ok_or("No app-data folder.")?;
     let reqs = engine_dir().join("requirements-engine.txt");
     tauri::async_runtime::spawn_blocking(move || {
         let total = 5;
         fs::create_dir_all(&env).map_err(err)?;
-        let py = env.join("python.exe");
+        let py = env_python(&env);
         let s = |p: &Path| p.to_string_lossy().to_string();
-        if !py.exists() {
+        if !cfg!(windows) && !py.exists() {
+            setup_step(&app, 1, total, "Downloading Python for your Mac (about 20 MB)");
+            let url = mac_python_url();
+            let tgz = env.join("python.tar.gz");
+            run_quiet("curl", &["-L", "--fail", "-o", &s(&tgz), &url], None)?;
+            run_quiet("tar", &["-xzf", &s(&tgz)], Some(&env))?; // creates env/python/...
+            let _ = fs::remove_file(&tgz);
+        }
+        if cfg!(windows) && !py.exists() {
             setup_step(&app, 1, total, "Downloading Python (about 11 MB)");
             let zip = env.join("python.zip");
             run_quiet("curl.exe", &["-L", "--fail", "-o", &s(&zip), PY_EMBED], None)?;
@@ -267,21 +296,21 @@ async fn setup_engine(app: AppHandle) -> Result<Value, String> {
                 fs::write(&pth, format!("{body}\nLib\\site-packages\n")).map_err(err)?;
             }
         }
-        if !env.join("Scripts").join("pip.exe").exists() {
+        if cfg!(windows) && !env.join("Scripts").join("pip.exe").exists() {
             setup_step(&app, 2, total, "Installing the package manager");
             let gp = env.join("get-pip.py");
             run_quiet("curl.exe", &["-L", "--fail", "-o", &s(&gp), GET_PIP], None)?;
             run_quiet(&s(&py), &[&s(&gp), "--no-warn-script-location"], Some(&env))?;
             let _ = fs::remove_file(&gp);
         }
-        let gpu = has_nvidia_gpu();
+        let gpu = cfg!(windows) && has_nvidia_gpu();
         setup_step(&app, 3, total, if gpu { "Installing the audio engine for your NVIDIA GPU (about 3 GB)" } else { "Installing the audio engine (about 1 GB)" });
         let mut torch = vec!["-m", "pip", "install", "--no-warn-script-location", "torch==2.6.0", "torchaudio==2.6.0"];
         if gpu {
             torch.extend(["--index-url", "https://download.pytorch.org/whl/cu124"]);
-        } else {
+        } else if cfg!(windows) {
             torch.extend(["--index-url", "https://download.pytorch.org/whl/cpu"]);
-        }
+        } // macOS: the default PyPI wheels already include Apple GPU (MPS) support
         run_quiet(&s(&py), &torch, Some(&env))?;
         setup_step(&app, 4, total, "Installing song analysis, lyrics and rendering components");
         run_quiet(&s(&py), &["-m", "pip", "install", "--no-warn-script-location", "-r", &s(&reqs)], Some(&env))?;
@@ -934,10 +963,40 @@ pub fn run() {
             let help = SubmenuBuilder::new(app, "Help")
                 .item(&item("help", "Getting Started", Some("F1"))?)
                 .build()?;
-            MenuBuilder::new(app).item(&file).item(&view).item(&direct).item(&help).build()
+            let mut bar = MenuBuilder::new(app);
+            #[cfg(target_os = "macos")]
+            {
+                let app_menu = SubmenuBuilder::new(app, "PULSEFRAME")
+                    .item(&PredefinedMenuItem::about(app, Some("About PULSEFRAME"), None)?)
+                    .separator()
+                    .item(&item("settings_mac", "Settings…", Some("CmdOrCtrl+,"))?)
+                    .separator()
+                    .item(&PredefinedMenuItem::hide(app, None)?)
+                    .item(&PredefinedMenuItem::hide_others(app, None)?)
+                    .item(&PredefinedMenuItem::show_all(app, None)?)
+                    .separator()
+                    .item(&PredefinedMenuItem::quit(app, None)?)
+                    .build()?;
+                let edit = SubmenuBuilder::new(app, "Edit")
+                    .item(&PredefinedMenuItem::undo(app, None)?)
+                    .item(&PredefinedMenuItem::redo(app, None)?)
+                    .separator()
+                    .item(&PredefinedMenuItem::cut(app, None)?)
+                    .item(&PredefinedMenuItem::copy(app, None)?)
+                    .item(&PredefinedMenuItem::paste(app, None)?)
+                    .item(&PredefinedMenuItem::select_all(app, None)?)
+                    .build()?;
+                bar = bar.item(&app_menu).item(&file).item(&edit);
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                bar = bar.item(&file);
+            }
+            bar.item(&view).item(&direct).item(&help).build()
         })
         .on_menu_event(|app, event| {
-            let _ = app.emit("menu", event.id().0.clone());
+            let id = event.id().0.clone();
+            let _ = app.emit("menu", if id == "settings_mac" { "settings".to_string() } else { id });
         })
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -1013,7 +1072,7 @@ mod tests {
 
     #[test]
     fn engine_python_exists() {
-        let (_, py) = dev_engine().expect("dev engine");
+        let Some((_, py)) = dev_engine() else { return }; // CI / installed layouts have no dev venv
         assert!(py.exists(), "engine venv missing at {:?}", py);
     }
 }
