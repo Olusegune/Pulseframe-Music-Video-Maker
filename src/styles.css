@@ -302,3 +302,16 @@ select.text-input { appearance: auto; }
 .take-top { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
 .take-err { color: var(--mist); font-size: 12px; margin-top: 6px; line-height: 1.45; }
 .take-actions { display: flex; gap: 6px; margin-top: 8px; }
+
+/* ---------- export ---------- */
+.preset-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.preset { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 8px 12px; border-radius: 12px;
+  background: var(--carbon); border: 1px solid var(--line); cursor: pointer; transition: all var(--t-micro) var(--ease); }
+.preset:hover { background: var(--graphite); }
+.preset.on { border: 2px solid var(--signal); padding: 13px 7px 11px; }
+.preset .frame { height: 44px; max-width: 90px; border: 1.5px solid var(--mist); border-radius: 4px; }
+.preset.on .frame { border-color: var(--signal); }
+.preset .pl { font-size: 13px; font-weight: 600; text-align: center; }
+.preset .rec { color: var(--gold); font-weight: 500; }
+.preset .ps { font-size: 11px; color: var(--smoke); }
+.export-done { margin-top: 16px; padding: 12px 14px; border-radius: 10px; background: var(--carbon); border: 1px solid var(--line); }

@@ -387,6 +387,15 @@ async fn resolve_job(app: AppHandle, dir: String, job: String, action: String) -
     Ok(res)
 }
 
+// ---------- export ----------
+
+#[tauri::command]
+async fn export_project(app: AppHandle, dir: String, preset: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_engine_result(&app, "export", &["-m".into(), "pulseframe_analysis.export".into(), dir, "--preset".into(), preset], &[])
+    }).await.map_err(err)?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -395,7 +404,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             key_status, set_key, delete_key, read_text, list_projects, create_project, load_project,
             analyze_project, direct_project, ensure_renderer, render_catalog, model_manifest, render_preview,
-            queue_render, resolve_job
+            queue_render, resolve_job, export_project
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

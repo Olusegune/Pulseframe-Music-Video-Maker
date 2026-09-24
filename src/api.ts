@@ -61,6 +61,11 @@ export const AUTO_MODEL: Record<string, string> = {
   kie: "bytedance/seedance-2",
 };
 
+export type ExportResult = {
+  path: string; preset: string; width: number; height: number; fps: number; duration: number;
+  shots: number; rendered: number; draft: boolean;
+};
+
 export type KeyStatus = { openai: boolean; fal: boolean; kie: boolean };
 export type EngineEvent = { task: string; event: string; job?: unknown; stage?: string; progress?: number; message?: string; [k: string]: unknown };
 
@@ -85,6 +90,7 @@ export const api = {
   resolveJob: (dir: string, job: string, action: "retry" | "dismiss") => invoke<Job>("resolve_job", { dir, job, action }),
   onRenderIdle: (fn: (e: { dir: string; error: string | null }) => void): Promise<UnlistenFn> =>
     listen<{ dir: string; error: string | null }>("render-idle", (e) => fn(e.payload)),
+  exportProject: (dir: string, preset: string) => invoke<ExportResult>("export_project", { dir, preset }),
   onEngine: (fn: (e: EngineEvent) => void): Promise<UnlistenFn> => listen<EngineEvent>("engine-progress", (e) => fn(e.payload)),
   mediaUrl: (path: string) => ((window as unknown as { __PF_MOCK__?: boolean }).__PF_MOCK__ ? path : convertFileSrc(path)),
 };

@@ -10,3 +10,5 @@ nvidia-cudnn-cu12==9.*
 fal-client
 requests
 pyyaml
+imageio-ffmpeg
+pillow

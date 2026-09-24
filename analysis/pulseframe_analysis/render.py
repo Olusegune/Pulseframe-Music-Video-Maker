@@ -226,13 +226,18 @@ def compile_request(shot: dict, scene: dict | None, plan: dict, project: dict, m
     style = plan.get("meta", {}).get("VISUAL STYLE", "")
     body = shot.get("visual_prompt") or " ".join(shot.get("beats", [])) or shot.get("description", "")
     parts = [body]
+    if shot.get("performers"):
+        parts.append(f"Characters: {', '.join(shot['performers'])}.")
     if shot.get("framing"):
         parts.append(f"Shot: {shot['framing']}" + (f", {shot.get('camera_movement') or ', '.join(shot.get('camera_moves', []))}"
                                                    if shot.get("camera_movement") or shot.get("camera_moves") else "") + ".")
     if shot.get("lighting"):
         parts.append(f"Lighting: {shot['lighting']}")
+    look = project.get("look")
+    if look:  # the project's chosen rendering look wins over the script's descriptive style
+        parts.append(f"Look: {look}")
     if style:
-        parts.append(f"Style: {style}")
+        parts.append(f"{'Mood and colour' if look else 'Style'}: {style}")
     image_refs = refs[: fields[roles["ref_images"]].get("max_items") or len(refs)] if "ref_images" in roles else []
     if image_refs:
         ordinal = ["first", "second", "third", "fourth", "fifth", "sixth"]

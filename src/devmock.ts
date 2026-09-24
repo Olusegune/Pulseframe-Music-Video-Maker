@@ -22,6 +22,7 @@ export async function installMock() {
       case "render_preview": return preview;
       case "render_catalog": return [{ provider: "fal", model: preview.manifest.model, title: preview.manifest.title, category: "image-to-video" }];
       case "queue_render": return [];
+      case "export_project": return new Promise((r) => setTimeout(() => r({ path: "C:\Users\you\Documents\PULSEFRAME\Exit Plan.pulseframe\exports\Exit Plan - Cinema (draft).mp4", preset: "Cinema 2.39:1", width: 1920, height: 804, fps: 24, duration: 191.44, shots: 70, rendered: 2, draft: true }), 800));
       case "plugin:event|listen": return 1;
       default: return null;
     }

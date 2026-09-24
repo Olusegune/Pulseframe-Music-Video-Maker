@@ -3,6 +3,7 @@ import { api, errorText, fmtTime, type EngineEvent, type LoadedProject, type Pla
 import * as I from "./icons";
 import { ACTIVE_STATES, ConfirmRender, defaultProvider, JobChip, latestJobs, RenderPanel } from "./Render";
 import { AUTO_MODEL, type Job, type KeyStatus } from "./api";
+import { ExportSheet } from "./Export";
 
 type Selection = { kind: "shot"; id: string } | { kind: "section"; index: number } | null;
 
@@ -25,6 +26,7 @@ export function Studio({ project, onHome, onSettings, onReload }: {
   const [jobs, setJobs] = useState<Job[]>(project.jobs ?? []);
   const [keys, setKeys] = useState<KeyStatus>({ openai: false, fal: false, kie: false });
   const [confirmAll, setConfirmAll] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const planName = project.directed ? "directed" : "production";
   const latest = useMemo(() => latestJobs(jobs, planName), [jobs, planName]);
 
@@ -118,7 +120,7 @@ export function Studio({ project, onHome, onSettings, onReload }: {
         <RailBtn icon={<I.Assets />} label="Assets" disabled />
         <RailBtn icon={<I.Studio />} label="Studio" active />
         <RailBtn icon={<I.Review />} label="Review" disabled />
-        <RailBtn icon={<I.Export />} label="Export" disabled />
+        <RailBtn icon={<I.Export />} label="Export" onClick={() => setExporting(true)} disabled={!plan} />
         <div className="spacer" />
         <RailBtn icon={<I.Gear />} label="Settings" onClick={onSettings} />
       </nav>
@@ -172,6 +174,9 @@ export function Studio({ project, onHome, onSettings, onReload }: {
       <Timeline map={map} shots={shots} time={time} sel={sel} flagged={flagged} latest={latest}
                 onSeek={seek} onSelect={(s) => { setSel(s); if (s?.kind === "shot") { const sh = shots.find((x) => x.id === s.id); if (sh) seek(sh.start); } }} />
 
+      {exporting && <ExportSheet dir={project.dir} projectAspect={project.project.aspect_ratio} shots={shots.length}
+                                 rendered={shots.filter((s) => latest.get(s.id)?.state === "ready").length}
+                                 onClose={() => setExporting(false)} />}
       {confirmAll && <ConfirmRender count={toRender.length} seconds={0} provider={defaultProvider(keys)}
                                     model={AUTO_MODEL[defaultProvider(keys)]} onCancel={() => setConfirmAll(false)} onConfirm={renderAll} />}
       {job && (
