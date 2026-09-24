@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, AUTO_MODEL, errorText, type CatalogItem, type Estimate, type Job, type KeyStatus, type Manifest, type ManifestInput, type Shot } from "./api";
+import { api, AUTO_LIPSYNC_MODEL, AUTO_MODEL, errorText, type CatalogItem, type Estimate, type Job, type KeyStatus, type Manifest, type ManifestInput, type Shot } from "./api";
 import * as I from "./icons";
 import { needsAttention } from "./Review";
 import { MediaInput, mediaKind } from "./Media";
@@ -53,6 +53,14 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
   const [lipSync, setLipSync] = useState(false);
   const [singing, setSinging] = useState<{ performer: string; lyrics: string[] } | null>(null);
   const [keyframeRef, setKeyframeRef] = useState<string | null>(null);
+  const [lipFor, setLipFor] = useState<Job | null>(null);
+  const lipProvider = keys.fal ? "fal" : "kie";
+  const lipsync = async () => {
+    const src = lipFor!;
+    setLipFor(null); setError("");
+    try { onQueued(await api.queueRender(dir, [shot.id], lipProvider, AUTO_LIPSYNC_MODEL[lipProvider], {}, [], "lipsync", src.id)); }
+    catch (e) { setError(errorText(e)); }
+  };
 
   const history = jobs.filter((j) => j.shot_id === shot.id && j.state !== "dismissed" && j.kind !== "image").sort((a, b) => b.created - a.created);
   const active = history.find((j) => ACTIVE_STATES.includes(j.state));
@@ -137,6 +145,11 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
               {j.state === "ready" && j.look && j.look !== lookId &&
                 <div className="take-err" style={{ color: "var(--warning)" }}>Rendered in an earlier look. Render a new take to match.</div>}
               {j.cost != null && <div className="dim num">Cost: {j.cost} {j.cost_unit ?? ""}</div>}
+              {j.kind === "lipsync" && <div className="dim">Lip-synced version</div>}
+              {j.state === "ready" && j.kind !== "lipsync" && keys[provider as keyof KeyStatus] && (keys.fal || keys.kie) && (
+                <div className="take-actions">
+                  <button className="btn small ghost" onClick={() => setLipFor(j)}>Lip-sync this take…</button>
+                </div>)}
               {(j.state === "failed" || j.state === "uncertain") && (
                 <div className="take-actions">
                   <button className="btn small" onClick={() => resolve(j, "retry")}>{j.state === "uncertain" ? "Send again" : "Retry"}</button>
@@ -148,6 +161,9 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
         </div>
       )}
 
+      {lipFor && <ConfirmRender count={1} seconds={0} provider={lipProvider} kind="lipsync"
+                                model={`${AUTO_LIPSYNC_MODEL[lipProvider]} · re-syncs the mouth to the isolated vocal under this shot`}
+                                onCancel={() => setLipFor(null)} onConfirm={lipsync} />}
       {confirm && <ConfirmRender count={1} seconds={Number(auto[manifest?.roles.duration ?? "duration"] ?? 0)}
                                  provider={provider} model={modelTitle} onCancel={() => setConfirm(false)} onConfirm={send}
                                  dir={dir} shots={[shot.id]} modelId={model} />}
@@ -231,19 +247,19 @@ function InputWidget({ f, value, onChange }: { f: ManifestInput; value: unknown;
 
 export function ConfirmRender({ count, seconds, provider, model, onCancel, onConfirm, dir, shots, modelId, kind = "video" }: {
   count: number; seconds: number; provider: string; model: string; onCancel: () => void; onConfirm: () => void;
-  dir?: string; shots?: string[]; modelId?: string | null; kind?: "video" | "image";
+  dir?: string; shots?: string[]; modelId?: string | null; kind?: "video" | "image" | "lipsync";
 }) {
   const [est, setEst] = useState<Estimate | null>(null);
   const [estErr, setEstErr] = useState(false);
   useEffect(() => {
-    if (!dir || !shots?.length) return;
+    if (!dir || !shots?.length || kind === "lipsync") return;
     api.renderEstimate(dir, shots, provider, modelId ?? null, kind).then(setEst).catch(() => setEstErr(true));
   }, [dir, shots, provider, modelId, kind]);
   const big = (est?.usd ?? 0) >= 25;
   return (
     <div className="overlay" onClick={onCancel}>
       <div className="sheet glass" role="dialog" aria-label="Confirm render" onClick={(e) => e.stopPropagation()} style={{ width: "min(500px, calc(100vw - 32px))" }}>
-        <h2>{kind === "image" ? "Make a keyframe?" : `Render ${count === 1 ? "this shot" : `${count} shots`}?`}</h2>
+        <h2>{kind === "lipsync" ? "Lip-sync this take?" : kind === "image" ? "Make a keyframe?" : `Render ${count === 1 ? "this shot" : `${count} shots`}?`}</h2>
         <p className="sub">
           {PROVIDER_NAME[provider]} · {model}<br />
           {count === 1 && seconds ? `${seconds} s of video, trimmed to the beat in the edit.` : ""}

@@ -52,7 +52,7 @@ export type Concept = {
 };
 export type JobState = "queued" | "submitting" | "submitted" | "ready" | "failed" | "uncertain" | "dismissed";
 export type Job = {
-  id: string; shot_id: string; plan: string; provider: "fal" | "kie" | "google"; model: string; state: JobState; kind?: "video" | "image";
+  id: string; shot_id: string; plan: string; provider: "fal" | "kie" | "google"; model: string; state: JobState; kind?: "video" | "image" | "lipsync"; source_job?: string | null;
   overrides: Record<string, unknown>; payload?: Record<string, unknown>; provider_job_id: string | null;
   output: string | null; error: string | null; cost: number | null; cost_unit?: string | null;
   created: number; updated: number; attempts: number; shot_start: number; shot_end: number; look?: string;
@@ -80,6 +80,7 @@ export const AUTO_MODEL: Record<string, string> = {
   kie: "bytedance/seedance-2",
   google: "veo-3.1-fast-generate-preview",
 };
+export const AUTO_LIPSYNC_MODEL: Record<string, string> = { fal: "fal-ai/sync-lipsync/v3", kie: "volcengine/video-to-video-lip-sync" };
 export const AUTO_IMAGE_MODEL: Record<string, string> = {
   fal: "fal-ai/nano-banana/edit",
   kie: "google/nano-banana-edit",
@@ -130,8 +131,8 @@ export const api = {
                   kind: "video" | "image" = "video") =>
     invoke<{ manifest: Manifest; payload: Record<string, unknown>; lip_sync?: boolean; singing?: { performer: string; lyrics: string[] } | null }>("render_preview", { dir, shot, provider, model, overrides, kind }),
   queueRender: (dir: string, shots: string[], provider: string, model: string | null, overrides: Record<string, unknown>,
-                fixNotes: string[] = [], kind: "video" | "image" = "video") =>
-    invoke<Job[]>("queue_render", { dir, shots, provider, model, overrides, fixNotes, kind }),
+                fixNotes: string[] = [], kind: "video" | "image" | "lipsync" = "video", sourceJob: string | null = null) =>
+    invoke<Job[]>("queue_render", { dir, shots, provider, model, overrides, fixNotes, kind, sourceJob }),
   renderEstimate: (dir: string, shots: string[], provider: string, model: string | null, kind: "video" | "image" = "video") =>
     invoke<Estimate>("render_estimate", { dir, shots, provider, model, kind }),
   resolveJob: (dir: string, job: string, action: "retry" | "dismiss" | "accept") => invoke<Job>("resolve_job", { dir, job, action }),

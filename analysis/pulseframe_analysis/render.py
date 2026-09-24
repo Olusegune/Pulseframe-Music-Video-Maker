@@ -35,6 +35,8 @@ AUTO = {
     "kie": "bytedance/seedance-2",
     "google": "veo-3.1-fast-generate-preview",
 }
+# Lip-sync pass: re-sync a finished take's mouth to the isolated vocal under the shot.
+AUTO_LIPSYNC = {"fal": "fal-ai/sync-lipsync/v3", "kie": "volcengine/video-to-video-lip-sync"}
 # Keyframes: a still for each shot, made with reference images, then animated (better consistency, cheaper retries).
 AUTO_IMAGE = {
     "fal": "fal-ai/nano-banana/edit",
@@ -63,6 +65,9 @@ ROLE_NAMES = {
     "resolution": ["resolution"],
     "audio": ["generate_audio", "with_audio", "enable_audio", "sound"],
     "seed": ["seed"],
+    # lip-sync passes: the take to re-sync and the vocal that drives it
+    "src_video": ["video_url", "input_video", "video"],
+    "src_audio": ["audio_url", "input_audio", "audio"],
 }
 
 
@@ -199,7 +204,9 @@ def manifest(provider: str, model: str, refresh: bool = False) -> dict:
     path = os.path.join(CACHE_DIR, f"{provider}__{re.sub(r'[^A-Za-z0-9._-]+', '_', model)}.json")
     if not refresh and os.path.exists(path) and time.time() - os.path.getmtime(path) < 7 * 86400:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            m = json.load(f)
+        # Recompute roles so improvements to role detection apply to cached schemas too.
+        return {**_finish(m["provider"], m["model"], m["title"], m.get("category", ""), m["inputs"]), "fetched": m.get("fetched")}
     m = fal_manifest(model) if provider == "fal" else kie_manifest(model)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(m, f, indent=1, ensure_ascii=False)
@@ -790,26 +797,70 @@ def singing(d: str, shot: dict, plan: dict) -> dict | None:
     return {"performer": singer, "lyrics": [l["text"] for l in lines]}
 
 
-def song_slice(d: str, shot: dict, seconds: float) -> str:
-    """The exact piece of the master song under this shot, as a small mp3 for audio-reference models."""
+def _vocal_stem(d: str) -> str | None:
+    """Isolated vocals from song analysis (Demucs), if available."""
+    stems = os.path.join(d, "cache", "stems", "htdemucs")
+    if os.path.isdir(stems):
+        for sub in os.listdir(stems):
+            v = os.path.join(stems, sub, "vocals.wav")
+            if os.path.exists(v):
+                return v
+    return None
+
+
+def song_slice(d: str, shot: dict, seconds: float, vocals_only: bool = False) -> str:
+    """The exact piece of the song under this shot as a small mp3 (full mix, or the isolated vocal)."""
     import subprocess
     from .export import NO_WINDOW, ffmpeg
     project = _read(os.path.join(d, "project.json"), {})
+    src = (_vocal_stem(d) if vocals_only else None) or os.path.join(d, project.get("song", "song.wav"))
     out_dir = os.path.join(d, "cache", "lipsync")
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, f"{shot['id']}_{shot['start']:.3f}_{seconds:.2f}.mp3")
+    tag = "vox" if src != os.path.join(d, project.get("song", "song.wav")) else "mix"
+    out = os.path.join(out_dir, f"{shot['id']}_{shot['start']:.3f}_{seconds:.2f}_{tag}.mp3")
     if not os.path.exists(out):
         subprocess.run([ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{shot['start']:.3f}", "-t", f"{seconds:.3f}",
-                        "-i", os.path.join(d, project.get("song", "song.wav")), "-ac", "2", "-b:a", "192k", out],
-                       check=True, creationflags=NO_WINDOW)
+                        "-i", src, "-ac", "2", "-b:a", "192k", out], check=True, creationflags=NO_WINDOW)
     return out
 
 
+def take_duration(path: str) -> float:
+    import subprocess
+    from .export import NO_WINDOW, ffmpeg
+    err = subprocess.run([ffmpeg(), "-hide_banner", "-i", path], capture_output=True, text=True, creationflags=NO_WINDOW).stderr
+    m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", err)
+    return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)) if m else 0.0
+
+
+def compile_lipsync(d: str, man: dict, shot: dict, source: dict, overrides: dict | None) -> dict:
+    """Lip-sync pass request: the source take plus the isolated vocal under the shot, same length."""
+    roles = man["roles"]
+    if "src_video" not in roles or "src_audio" not in roles:
+        raise SystemExit(f"{man['title']} doesn't take a video and an audio track, so it can't lip-sync a take.")
+    take = os.path.join(d, source["output"])
+    seconds = take_duration(take) or (shot["end"] - shot["start"])
+    payload = {roles["src_video"]: PROJECT_MEDIA + source["output"],
+               roles["src_audio"]: PROJECT_MEDIA + os.path.relpath(song_slice(d, shot, seconds, vocals_only=True), d).replace(os.sep, "/")}
+    fields = {f["name"]: f for f in man["inputs"]}
+    if "sync_mode" in fields:
+        payload["sync_mode"] = "cut_off"
+    if "separate_vocal" in fields and not _vocal_stem(d):
+        payload["separate_vocal"] = True
+    for k, v in (overrides or {}).items():
+        if k in fields:
+            payload[k] = v
+    return payload
+
+
 def enqueue(d: str, shot_ids: list[str], provider: str, model: str | None, overrides: dict | None,
-            fix_notes: list[str] | None = None, kind: str = "video") -> list[dict]:
+            fix_notes: list[str] | None = None, kind: str = "video", source_job: str | None = None) -> list[dict]:
     project = _read(os.path.join(d, "project.json"), {})
     plan_name, plan = _load_plan(d)
-    model = model or (AUTO_IMAGE if kind == "image" else AUTO)[provider]
+    model = model or {"image": AUTO_IMAGE, "lipsync": AUTO_LIPSYNC}.get(kind, AUTO)[provider]
+    if kind == "lipsync":
+        src = next((j for j in Store(d).jobs if j["id"] == source_job and j["state"] == "ready" and j.get("output")), None)
+        if not src:
+            raise SystemExit("Choose a finished take to lip-sync.")
     man = manifest(provider, model)
     store = Store(d)
     made = []
@@ -821,7 +872,7 @@ def enqueue(d: str, shot_ids: list[str], provider: str, model: str | None, overr
         shot, scene = _shot(plan, sid)
         job = {"id": uuid.uuid4().hex[:12], "shot_id": sid, "plan": plan_name, "source_shots": shot.get("source_shots", []),
                "shot_start": shot["start"], "shot_end": shot["end"], "provider": provider, "model": man["model"],
-               "kind": kind, "overrides": overrides or {}, "fix_notes": fix_notes or [], "look": resolve_look(project)["id"], "state": "queued", "provider_job_id": None, "attempts": 0,
+               "kind": kind, "source_job": source_job, "overrides": overrides or {}, "fix_notes": fix_notes or [], "look": resolve_look(project)["id"], "state": "queued", "provider_job_id": None, "attempts": 0,
                "created": int(time.time()), "updated": int(time.time()), "output": None, "error": None, "cost": None}
         store.jobs.append(job)
         made.append(job)
@@ -891,11 +942,17 @@ def _submit(d: str, store: Store, project: dict, p, j: dict) -> None:
     shot, scene = _shot(plan, j["shot_id"])
     man = manifest(j["provider"], j["model"])
     emit(event="progress", stage=f"preparing {j['shot_id']}")
-    refs = _uploaded(d, p, _reference_files(d, project))
-    sung = _sung_for(d, shot, plan, man, p) if j.get("kind", "video") == "video" else None
-    if j.get("kind", "video") == "video":
-        refs = _with_keyframe(refs, approved_keyframe(d, j["plan"], j["shot_id"]))
-    payload = compile_request(shot, scene, plan, project, man, refs, j.get("overrides"), j.get("fix_notes"), sung)
+    refs = [] if j.get("kind") == "lipsync" else _uploaded(d, p, _reference_files(d, project))
+    if j.get("kind") == "lipsync":
+        src = next((x for x in store.jobs if x["id"] == j.get("source_job")), None)
+        if not src or not src.get("output"):
+            raise SystemExit("The take this lip-sync was based on is gone.")
+        payload = compile_lipsync(d, man, shot, src, j.get("overrides"))
+    else:
+        sung = _sung_for(d, shot, plan, man, p) if j.get("kind", "video") == "video" else None
+        if j.get("kind", "video") == "video":
+            refs = _with_keyframe(refs, approved_keyframe(d, j["plan"], j["shot_id"]))
+        payload = compile_request(shot, scene, plan, project, man, refs, j.get("overrides"), j.get("fix_notes"), sung)
     payload = _resolve_project_media(d, p, payload)
     # Persist intent BEFORE the billable call; the id is persisted the moment it returns.
     try:
@@ -992,7 +1049,7 @@ def _check(d: str, store: Store, p, j: dict) -> None:
         os.replace(out + ".part", out)
     store.update(j, state="ready", output=os.path.relpath(out, d).replace(os.sep, "/"), output_url=res["url"],
                  cost=res.get("cost"), cost_unit=res.get("cost_unit"), finished=int(time.time()))
-    if j.get("kind", "video") == "video":
+    if j.get("kind", "video") in ("video", "lipsync"):
         _review(d, store, j)
 
 
@@ -1144,7 +1201,7 @@ def main(argv: list[str]) -> int:
         s = sub.add_parser(name)
         s.add_argument("project"); s.add_argument("--shots", required=True); s.add_argument("--provider", required=True)
         s.add_argument("--model"); s.add_argument("--overrides", default="{}"); s.add_argument("--fix-notes", default="[]")
-        s.add_argument("--kind", default="video", choices=["video", "image"])
+        s.add_argument("--kind", default="video", choices=["video", "image", "lipsync"]); s.add_argument("--source-job")
     r = sub.add_parser("run"); r.add_argument("project")
     es = sub.add_parser("estimate"); es.add_argument("project"); es.add_argument("--shots", required=True)
     es.add_argument("--provider", required=True); es.add_argument("--model"); es.add_argument("--kind", default="video")
@@ -1160,7 +1217,7 @@ def main(argv: list[str]) -> int:
             emit(event="result", data=preview(a.project, a.shots.split(",")[0], a.provider, a.model, json.loads(a.overrides), a.kind))
         elif a.cmd == "enqueue":
             emit(event="result", data=enqueue(a.project, a.shots.split(","), a.provider, a.model, json.loads(a.overrides),
-                                              json.loads(a.fix_notes), a.kind))
+                                              json.loads(a.fix_notes), a.kind, a.source_job))
         elif a.cmd == "run":
             run(a.project)
         elif a.cmd == "estimate":

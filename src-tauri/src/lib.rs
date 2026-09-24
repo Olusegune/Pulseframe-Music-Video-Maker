@@ -463,7 +463,8 @@ async fn render_preview(app: AppHandle, dir: String, shot: String, provider: Str
 /// Queue shots for rendering (billable once the renderer sends them) and start the renderer.
 #[tauri::command]
 async fn queue_render(app: AppHandle, dir: String, shots: Vec<String>, provider: String, model: Option<String>,
-                      overrides: Value, fix_notes: Option<Vec<String>>, kind: Option<String>) -> Result<Value, String> {
+                      overrides: Value, fix_notes: Option<Vec<String>>, kind: Option<String>,
+                      source_job: Option<String>) -> Result<Value, String> {
     let key_ok = keyring::Entry::new(KEY_SERVICE, &provider).and_then(|e| e.get_password()).is_ok();
     if !key_ok {
         let name = match provider.as_str() { "fal" => "fal.ai", "kie" => "Kie.ai", "google" => "Google Gemini", _ => "provider" };
@@ -476,6 +477,9 @@ async fn queue_render(app: AppHandle, dir: String, shots: Vec<String>, provider:
         args.push("--fix-notes".into());
         args.push(json!(fix_notes.unwrap_or_default()).to_string());
         args.extend(["--kind".into(), kind.unwrap_or_else(|| "video".into())]);
+        if let Some(s) = source_job {
+            args.extend(["--source-job".into(), s]);
+        }
         run_engine_result(&app2, "enqueue", &render_args("enqueue", &args), &[])
     }).await.map_err(err)??;
     ensure_renderer(app, dir);
