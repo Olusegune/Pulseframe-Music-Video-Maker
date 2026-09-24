@@ -40,6 +40,38 @@ jobs:
         with: { python-version: "3.11" }
       - run: python -m compileall -q analysis/pulseframe_analysis
 
+  macos-compile:
+    name: macOS compile check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci && npx vite build
+      - name: cargo build (errors published as annotations)
+        shell: bash
+        run: |
+          set +e
+          cargo build --manifest-path src-tauri/Cargo.toml 2>&1 | tee build.log
+          code=${PIPESTATUS[0]}
+          if [ $code -ne 0 ]; then
+            grep -E "^(error|warning: unused)" -A8 build.log | head -80 | sed 's/%/%25/g' | while IFS= read -r l; do echo "::error::$l"; done
+          fi
+          exit $code
+      - name: Tauri bundle (errors published as annotations)
+        shell: bash
+        run: |
+          set +e
+          npx tauri build --bundles app 2>&1 | tee bundle.log
+          code=${PIPESTATUS[0]}
+          if [ $code -ne 0 ]; then
+            grep -iE "error|failed" -A4 bundle.log | tail -60 | sed 's/%/%25/g' | while IFS= read -r l; do echo "::error::$l"; done
+          fi
+          exit $code
+
   engine:
     name: Engine install + analysis (${{ matrix.os }})
     strategy:
