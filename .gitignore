@@ -32,3 +32,6 @@ __pycache__/
 
 # local UI preview data
 mock-data/
+
+# local preview config
+.claude/

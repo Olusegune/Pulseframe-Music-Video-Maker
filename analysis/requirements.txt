@@ -7,3 +7,6 @@ demucs
 nvidia-cublas-cu12
 nvidia-cudnn-cu12==9.*
 # GPU torch: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+fal-client
+requests
+pyyaml

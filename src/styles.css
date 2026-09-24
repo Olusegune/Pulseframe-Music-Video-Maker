@@ -263,3 +263,42 @@ textarea.text-input { min-height: 150px; resize: vertical; line-height: 1.55; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px) scale(0.99) } to { opacity: 1; transform: none } }
 @keyframes slide { from { transform: translateX(-100%) } to { transform: translateX(300%) } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* ---------- rendering ---------- */
+.clip { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+.chip.gen { color: var(--signal-bright); }
+.spin { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid currentColor; border-right-color: transparent;
+  display: inline-block; animation: turn 0.9s linear infinite; }
+.spin.sm { width: 8px; height: 8px; }
+@keyframes turn { to { transform: rotate(360deg) } }
+.render-panel { padding: 14px; border-radius: 12px; background: var(--graphite); border: 1px solid var(--line); }
+.render-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.dim { color: var(--smoke); font-size: 12px; }
+.btn.small { height: 28px; padding: 0 10px; font-size: 12px; }
+.seg { display: flex; background: var(--carbon); border: 1px solid var(--line); border-radius: var(--r-control); padding: 3px; margin-bottom: 10px; }
+.seg button { flex: 1; border: none; background: transparent; color: var(--mist); padding: 5px 8px; border-radius: 6px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.seg button.on { background: var(--slate); color: var(--frost); }
+.mini-label { display: block; font-size: 11.5px; color: var(--smoke); margin: 4px 0 4px; }
+.hint-row { font-size: 11px; color: var(--smoke); margin: 4px 0 12px; }
+.model-inputs { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.mi { padding: 8px 10px; border-radius: 8px; background: var(--carbon); border: 1px solid var(--line); }
+.mi.pinned { border-color: rgba(100,183,255,0.45); }
+.mi-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.mi-name { font-size: 12px; font-weight: 600; font-family: ui-monospace, "Cascadia Mono", monospace; }
+.mi-role { font-size: 10px; color: var(--gold); background: var(--gold-wash); padding: 1px 6px; border-radius: 999px; }
+.mi-origin { margin-left: auto; font-size: 10.5px; color: var(--smoke); }
+.mi-origin.auto { color: var(--signal-bright); }
+.mi-origin.pinned { color: var(--frost); font-weight: 600; }
+.mi-desc { font-size: 11px; color: var(--smoke); margin-top: 5px; line-height: 1.45; }
+.mi .text-input { padding: 6px 8px; font-size: 12.5px; }
+.text-input.mono, .raw { font-family: ui-monospace, "Cascadia Mono", monospace; font-size: 11.5px; }
+select.text-input { appearance: auto; }
+.toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; }
+.link { border: none; background: none; color: var(--signal-bright); font-size: 11px; cursor: pointer; padding: 0; }
+.raw { background: var(--obsidian); border: 1px solid var(--line); border-radius: 8px; padding: 10px; white-space: pre-wrap;
+  word-break: break-word; max-height: 260px; overflow: auto; color: var(--mist); user-select: text; }
+.takes { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.take { padding: 8px 10px; border-radius: 8px; background: var(--carbon); border: 1px solid var(--line); }
+.take-top { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.take-err { color: var(--mist); font-size: 12px; margin-top: 6px; line-height: 1.45; }
+.take-actions { display: flex; gap: 6px; margin-top: 8px; }

@@ -62,6 +62,11 @@ fn update_project(dir: &Path, patch: Value) -> Result<(), String> {
 
 /// Run one engine job, forwarding progress lines to the UI. Returns stderr tail on failure.
 fn run_engine(app: &AppHandle, job: &str, args: &[String], envs: &[(&str, String)]) -> Result<(), String> {
+    run_engine_result(app, job, args, envs).map(|_| ())
+}
+
+/// Like run_engine, but returns the `data` of the engine's final `{"event":"result"}` line.
+fn run_engine_result(app: &AppHandle, job: &str, args: &[String], envs: &[(&str, String)]) -> Result<Value, String> {
     let mut cmd = Command::new(engine_python());
     cmd.args(args)
         .current_dir(engine_dir())
@@ -85,19 +90,24 @@ fn run_engine(app: &AppHandle, job: &str, args: &[String], envs: &[(&str, String
         s
     });
     let mut engine_error: Option<String> = None;
+    let mut result = Value::Null;
     for line in BufReader::new(child.stdout.take().unwrap()).lines().map_while(Result::ok) {
         if let Ok(mut v) = serde_json::from_str::<Value>(&line) {
             if v["event"] == "error" {
                 engine_error = v["message"].as_str().map(String::from);
             }
-            v["job"] = json!(job);
+            if v["event"] == "result" {
+                result = v["data"].take();
+                continue;
+            }
+            v["task"] = json!(job);
             let _ = app.emit("engine-progress", v);
         }
     }
     let status = child.wait().map_err(err)?;
     let stderr_text = err_thread.join().unwrap_or_default();
     if status.success() && engine_error.is_none() {
-        return Ok(());
+        return Ok(result);
     }
     let tail: String = stderr_text.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
     Err(engine_error.unwrap_or(tail))
@@ -227,6 +237,7 @@ fn load_project(dir: String) -> Result<Value, String> {
         "song_map": read_json(&d.join("songmap.json")),
         "production": read_json(&d.join("production.json")),
         "directed": read_json(&d.join("directed.json")),
+        "jobs": read_json(&d.join("jobs.json")).map(|j| j["jobs"].clone()).unwrap_or(json!([])),
     }))
 }
 
@@ -246,7 +257,7 @@ async fn analyze_project(app: AppHandle, dir: String) -> Result<(), String> {
         }
         run_engine(&app, "analysis", &args, &[])?;
         if let Some(s) = project["script"].as_str() {
-            let _ = app.emit("engine-progress", json!({"job": "analysis", "stage": "script", "progress": 1.0}));
+            let _ = app.emit("engine-progress", json!({"task": "analysis", "stage": "script", "progress": 1.0}));
             run_engine(&app, "script", &["-m".into(), "pulseframe_analysis.script_import".into(),
                                          p(s), p("songmap.json"), p("production.json")], &[])?;
         }
@@ -276,6 +287,106 @@ async fn direct_project(app: AppHandle, dir: String) -> Result<(), String> {
     .map_err(err)?
 }
 
+// ---------- rendering ----------
+
+fn provider_env() -> Vec<(&'static str, String)> {
+    let mut env = vec![];
+    for (provider, var) in [("fal", "FAL_KEY"), ("kie", "KIE_KEY")] {
+        if let Ok(k) = keyring::Entry::new(KEY_SERVICE, provider).and_then(|e| e.get_password()) {
+            env.push((var, k));
+        }
+    }
+    env
+}
+
+fn render_args(sub: &str, rest: &[String]) -> Vec<String> {
+    let mut a = vec!["-m".to_string(), "pulseframe_analysis.render".into(), sub.into()];
+    a.extend_from_slice(rest);
+    a
+}
+
+/// Project folders with a live background renderer, so we never start two for one project.
+static RUNNERS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Start (or keep) the background renderer for a project. It drives every queued/in-flight job,
+/// including ones left running when the app was closed, then exits.
+#[tauri::command]
+fn ensure_renderer(app: AppHandle, dir: String) {
+    {
+        let mut r = RUNNERS.lock().unwrap();
+        if r.contains(&dir) {
+            return;
+        }
+        r.push(dir.clone());
+    }
+    std::thread::spawn(move || {
+        let res = run_engine(&app, "render", &render_args("run", &[dir.clone()]), &provider_env());
+        RUNNERS.lock().unwrap().retain(|d| d != &dir);
+        let _ = app.emit("render-idle", json!({"dir": dir, "error": res.err()}));
+    });
+}
+
+#[tauri::command]
+async fn render_catalog(app: AppHandle, provider: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_engine_result(&app, "catalog", &render_args("catalog", &["--provider".into(), provider]), &[])
+    }).await.map_err(err)?
+}
+
+#[tauri::command]
+async fn model_manifest(app: AppHandle, provider: String, model: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_engine_result(&app, "manifest", &render_args("manifest", &["--provider".into(), provider, "--model".into(), model]), &[])
+    }).await.map_err(err)?
+}
+
+fn shot_args(dir: String, shots: Vec<String>, provider: String, model: Option<String>, overrides: Value) -> Vec<String> {
+    let mut a = vec![dir, "--shots".into(), shots.join(","), "--provider".into(), provider,
+                     "--overrides".into(), overrides.to_string()];
+    if let Some(m) = model.filter(|m| !m.is_empty()) {
+        a.push("--model".into());
+        a.push(m);
+    }
+    a
+}
+
+/// Exactly what would be sent for one shot. Uploads nothing and costs nothing.
+#[tauri::command]
+async fn render_preview(app: AppHandle, dir: String, shot: String, provider: String, model: Option<String>,
+                        overrides: Value) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_engine_result(&app, "preview", &render_args("preview", &shot_args(dir, vec![shot], provider, model, overrides)), &[])
+    }).await.map_err(err)?
+}
+
+/// Queue shots for rendering (billable once the renderer sends them) and start the renderer.
+#[tauri::command]
+async fn queue_render(app: AppHandle, dir: String, shots: Vec<String>, provider: String, model: Option<String>,
+                      overrides: Value) -> Result<Value, String> {
+    let key_ok = keyring::Entry::new(KEY_SERVICE, &provider).and_then(|e| e.get_password()).is_ok();
+    if !key_ok {
+        return Err(format!("Add your {} key in Settings first.", if provider == "fal" { "fal.ai" } else { "Kie.ai" }));
+    }
+    let app2 = app.clone();
+    let d2 = dir.clone();
+    let made = tauri::async_runtime::spawn_blocking(move || {
+        run_engine_result(&app2, "enqueue", &render_args("enqueue", &shot_args(d2, shots, provider, model, overrides)), &[])
+    }).await.map_err(err)??;
+    ensure_renderer(app, dir);
+    Ok(made)
+}
+
+#[tauri::command]
+async fn resolve_job(app: AppHandle, dir: String, job: String, action: String) -> Result<Value, String> {
+    let app2 = app.clone();
+    let d2 = dir.clone();
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        run_engine_result(&app2, "resolve", &render_args("resolve", &[d2, "--job".into(), job, "--action".into(), action]), &[])
+    }).await.map_err(err)??;
+    ensure_renderer(app, dir);
+    Ok(res)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -283,7 +394,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             key_status, set_key, delete_key, read_text, list_projects, create_project, load_project,
-            analyze_project, direct_project
+            analyze_project, direct_project, ensure_renderer, render_catalog, model_manifest, render_preview,
+            queue_render, resolve_job
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

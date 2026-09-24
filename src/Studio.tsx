@@ -1,6 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, fmtTime, type EngineEvent, type LoadedProject, type Plan, type Scene, type Shot, type SongMap } from "./api";
 import * as I from "./icons";
+import { ACTIVE_STATES, ConfirmRender, defaultProvider, JobChip, latestJobs, RenderPanel } from "./Render";
+import { AUTO_MODEL, type Job, type KeyStatus } from "./api";
 
 type Selection = { kind: "shot"; id: string } | { kind: "section"; index: number } | null;
 
@@ -20,6 +22,27 @@ export function Studio({ project, onHome, onSettings, onReload }: {
   const [inspector, setInspector] = useState(true);
   const [job, setJob] = useState<{ title: string; detail: string } | null>(null);
   const [error, setError] = useState("");
+  const [jobs, setJobs] = useState<Job[]>(project.jobs ?? []);
+  const [keys, setKeys] = useState<KeyStatus>({ openai: false, fal: false, kie: false });
+  const [confirmAll, setConfirmAll] = useState(false);
+  const planName = project.directed ? "directed" : "production";
+  const latest = useMemo(() => latestJobs(jobs, planName), [jobs, planName]);
+
+  const mergeJobs = useCallback((incoming: Job[]) => setJobs((cur) => {
+    const byId = new Map(cur.map((j) => [j.id, j]));
+    for (const j of incoming) byId.set(j.id, { ...byId.get(j.id), ...j });
+    return [...byId.values()];
+  }), []);
+
+  useEffect(() => {
+    const refresh = () => api.keyStatus().then(setKeys).catch(() => {});
+    refresh();
+    window.addEventListener("pf-keys-changed", refresh);
+    // Reconnect to renders that were running when the app closed (PRD §29).
+    if ((project.jobs ?? []).some((j) => ACTIVE_STATES.includes(j.state))) api.ensureRenderer(project.dir);
+    const un = api.onEngine((e) => { if (e.event === "job" && e.job) mergeJobs([e.job as Job]); });
+    return () => { window.removeEventListener("pf-keys-changed", refresh); un.then((f) => f()); };
+  }, [project.dir, project.jobs, mergeJobs]);
 
   useEffect(() => {
     if (!project.song_path) return;
@@ -70,7 +93,7 @@ export function Studio({ project, onHome, onSettings, onReload }: {
     setError("");
     setJob({ title: "Directing", detail: "Reading the script" });
     const un = await api.onEngine((e: EngineEvent) => {
-      if (e.job === "director" && e.stage) setJob({ title: "Directing", detail: capital(e.stage) });
+      if (e.task === "director" && e.stage) setJob({ title: "Directing", detail: capital(e.stage) });
     });
     try { await api.directProject(project.dir); onReload(); }
     catch (e) { setError(errorText(e)); }
@@ -78,6 +101,13 @@ export function Studio({ project, onHome, onSettings, onReload }: {
   };
 
   const flagged = shots.filter((s) => (s.flags?.length ?? 0) > 0).length;
+  const toRender = shots.filter((s) => { const j = latest.get(s.id); return !j || j.state === "failed"; });
+  const renderAll = async () => {
+    setConfirmAll(false);
+    const provider = defaultProvider(keys);
+    try { mergeJobs(await api.queueRender(project.dir, toRender.map((s) => s.id), provider, AUTO_MODEL[provider], {})); }
+    catch (e) { setError(errorText(e)); }
+  };
 
   return (
     <div className="studio">
@@ -105,6 +135,8 @@ export function Studio({ project, onHome, onSettings, onReload }: {
             <button className={!director ? "on" : ""} onClick={() => setDirector(false)}>Simple</button>
             <button className={director ? "on" : ""} onClick={() => setDirector(true)}>Director Mode</button>
           </div>
+          {plan && (keys.fal || keys.kie) && <button className="btn" onClick={() => setConfirmAll(true)}
+                                   disabled={toRender.length === 0}>Render {toRender.length === shots.length ? "all" : toRender.length} shots</button>}
           {plan && <button className="btn hero" onClick={directVideo} disabled={!!job}>
             {project.directed ? "Direct Again" : "Direct My Video"}</button>}
           <button className="icon-btn" onClick={() => setInspector((v) => !v)} title="Inspector" aria-label="Toggle inspector"><I.Panel /></button>
@@ -113,7 +145,10 @@ export function Studio({ project, onHome, onSettings, onReload }: {
         <div className="viewer-wrap">
           <div className="stage">
           <div className="viewer" style={{ ["--ar" as string]: aspectNum(project.project.aspect_ratio) }}>
-            {shown ? <Storyboard shot={shown} scene={scenes.find((s) => s.number === shown.scene)} /> :
+            {shown && latest.get(shown.id)?.state === "ready" && latest.get(shown.id)?.output ?
+              <Clip src={api.mediaUrl(`${project.dir}/${latest.get(shown.id)!.output}`)} offset={time - shown.start} playing={playing} /> : null}
+            {shown ? <Storyboard shot={shown} scene={scenes.find((s) => s.number === shown.scene)} job={latest.get(shown.id)}
+                                 hidden={latest.get(shown.id)?.state === "ready"} /> :
               <div className="empty">{plan ? "Press play to preview the song map" : "Add a script or press Direct My Video to plan shots"}</div>}
             <div className="subtitle" style={{ opacity: lyric ? 1 : 0 }}>{lyric?.text ?? ""}</div>
           </div>
@@ -129,12 +164,16 @@ export function Studio({ project, onHome, onSettings, onReload }: {
 
       <aside className={`inspector ${inspector ? "" : "collapsed"}`} aria-label="Inspector">
         <Inspector sel={sel} shots={shots} scenes={scenes} map={map} plan={plan} director={director} project={project}
-                   onClose={() => setSel(null)} />
+                   onClose={() => setSel(null)}
+                   renderPanel={(s: Shot) => <RenderPanel dir={project.dir} shot={s} jobs={jobs.filter((j) => j.plan === planName)}
+                                                          director={director} keys={keys} onQueued={mergeJobs} onSettings={onSettings} />} />
       </aside>
 
-      <Timeline map={map} shots={shots} time={time} sel={sel} flagged={flagged}
+      <Timeline map={map} shots={shots} time={time} sel={sel} flagged={flagged} latest={latest}
                 onSeek={seek} onSelect={(s) => { setSel(s); if (s?.kind === "shot") { const sh = shots.find((x) => x.id === s.id); if (sh) seek(sh.start); } }} />
 
+      {confirmAll && <ConfirmRender count={toRender.length} seconds={0} provider={defaultProvider(keys)}
+                                    model={AUTO_MODEL[defaultProvider(keys)]} onCancel={() => setConfirmAll(false)} onConfirm={renderAll} />}
       {job && (
         <div className="toast glass" role="status">
           <div className="t">{job.title}</div>
@@ -176,33 +215,47 @@ export function StateChip({ shot }: { shot: Shot }) {
   return <span className="chip planned"><I.Circle size={12} /> Planned</span>;
 }
 
-function Storyboard({ shot, scene }: { shot: Shot; scene?: Scene }) {
+/** A rendered take, kept in step with the master audio (the song is the clock). */
+function Clip({ src, offset, playing }: { src: string; offset: number; playing: boolean }) {
+  const v = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const el = v.current;
+    if (!el) return;
+    if (Math.abs(el.currentTime - offset) > 0.15) el.currentTime = Math.max(0, offset);
+    if (playing && el.paused) el.play().catch(() => {});
+    if (!playing && !el.paused) el.pause();
+  }, [offset, playing, src]);
+  return <video ref={v} className="clip" src={src} muted playsInline preload="auto" />;
+}
+
+function Storyboard({ shot, scene, job, hidden }: { shot: Shot; scene?: Scene; job?: Job; hidden?: boolean }) {
   const text = shot.visual_prompt ?? shot.beats.join(" ");
   return (
     <>
       <div className="frame-info">
         <span className="chip num">{shot.id}</span>
-        <StateChip shot={shot} />
+        {job ? <JobChip job={job} /> : <StateChip shot={shot} />}
         <span className="chip num">{(shot.end - shot.start).toFixed(1)}s</span>
       </div>
-      <div className="board">
+      {!hidden && <div className="board">
         {scene && <div className="scene-head">{scene.heading}</div>}
         <div className="desc">{text}</div>
         <div className="framing">{[shot.framing, shot.camera_movement ?? shot.camera_moves?.join(", ")].filter(Boolean).join(" · ")}</div>
-      </div>
+      </div>}
     </>
   );
 }
 
 // ---------------- inspector ----------------
 
-function Inspector({ sel, shots, scenes, map, plan, director, project, onClose }: {
+function Inspector({ sel, shots, scenes, map, plan, director, project, onClose, renderPanel }: {
   sel: Selection; shots: Shot[]; scenes: Scene[]; map: SongMap | null; plan: Plan | null; director: boolean;
-  project: LoadedProject; onClose: () => void;
+  project: LoadedProject; onClose: () => void; renderPanel: (s: Shot) => React.ReactNode;
 }) {
   if (sel?.kind === "shot") {
     const s = shots.find((x) => x.id === sel.id);
-    if (s) return <ShotInspector shot={s} scene={scenes.find((c) => c.number === s.scene)} director={director} onClose={onClose} />;
+    if (s) return <ShotInspector shot={s} scene={scenes.find((c) => c.number === s.scene)} director={director} onClose={onClose}
+                                 renderPanel={renderPanel(s)} />;
   }
   if (sel?.kind === "section" && map) {
     const sec = map.sections[sel.index];
@@ -247,7 +300,9 @@ function Inspector({ sel, shots, scenes, map, plan, director, project, onClose }
   );
 }
 
-function ShotInspector({ shot: s, scene, director, onClose }: { shot: Shot; scene?: Scene; director: boolean; onClose: () => void }) {
+function ShotInspector({ shot: s, scene, director, onClose, renderPanel }: {
+  shot: Shot; scene?: Scene; director: boolean; onClose: () => void; renderPanel: React.ReactNode;
+}) {
   const row = (k: string, v?: string | number | null) => (v === undefined || v === null || v === "" ? null :
     <><span className="k">{k}</span><span className="v">{v}</span></>);
   return (
@@ -267,6 +322,7 @@ function ShotInspector({ shot: s, scene, director, onClose }: { shot: Shot; scen
           {row("Emotion", s.emotion)}
           {s.performance_intensity != null && <><span className="k">Intensity</span><span className="v"><Meter v={s.performance_intensity} /></span></>}
         </div></div>
+        {renderPanel}
         {s.purpose && <div className="insp-section"><h4>Purpose</h4><p className="prose">{s.purpose}</p></div>}
         <div className="insp-section"><h4>{s.beats.length > 1 ? `Story beats (${s.beats.length})` : "Action"}</h4>
           {s.beats.length > 1 ? <ol className="beats">{s.beats.map((b, i) => <li key={i}>{b}</li>)}</ol> : <p className="prose">{s.beats[0]}</p>}</div>
@@ -295,8 +351,8 @@ const Meter = ({ v }: { v: number }) => <span className="meter" aria-label={`${v
 
 // ---------------- timeline ----------------
 
-function Timeline({ map, shots, time, sel, flagged, onSeek, onSelect }: {
-  map: SongMap | null; shots: Shot[]; time: number; sel: Selection; flagged: number;
+function Timeline({ map, shots, time, sel, flagged, latest, onSeek, onSelect }: {
+  map: SongMap | null; shots: Shot[]; time: number; sel: Selection; flagged: number; latest: Map<string, Job>;
   onSeek: (t: number) => void; onSelect: (s: Selection) => void;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
@@ -379,7 +435,7 @@ function Timeline({ map, shots, time, sel, flagged, onSeek, onSelect }: {
                    onClick={(e) => { e.stopPropagation(); onSelect({ kind: "shot", id: s.id }); }}>
                 <div className="id num">{s.id.slice(1)}</div>
                 <div className="fr">{s.framing}</div>
-                <div className="st">{s.flags?.length ? <><I.Alert size={10} /> Review</> : <><I.Circle size={10} /> Planned</>}</div>
+                <div className="st"><CardState job={latest.get(s.id)} flagged={!!s.flags?.length} /></div>
               </div>
             ))}
           </div>
@@ -388,4 +444,13 @@ function Timeline({ map, shots, time, sel, flagged, onSeek, onSelect }: {
       </div>
     </section>
   );
+}
+
+function CardState({ job, flagged }: { job?: Job; flagged: boolean }) {
+  if (job?.state === "ready") return <span style={{ color: "var(--success)" }}><I.Check size={10} /> Ready</span>;
+  if (job && ACTIVE_STATES.includes(job.state)) return <span style={{ color: "var(--signal-bright)" }}><span className="spin sm" /> {job.state === "queued" ? "Queued" : "Rendering"}</span>;
+  if (job?.state === "failed") return <span style={{ color: "var(--error)" }}><I.Alert size={10} /> Failed</span>;
+  if (job?.state === "uncertain") return <span style={{ color: "var(--warning)" }}><I.Alert size={10} /> Check</span>;
+  if (flagged) return <><I.Alert size={10} /> Review</>;
+  return <><I.Circle size={10} /> Planned</>;
 }

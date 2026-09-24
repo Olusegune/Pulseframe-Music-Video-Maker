@@ -14,7 +14,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<Record<string, string>>({});
 
-  const refresh = () => api.keyStatus().then(setStatus);
+  const refresh = () => api.keyStatus().then((k) => { setStatus(k); window.dispatchEvent(new Event("pf-keys-changed")); });
   useEffect(() => { refresh(); }, []);
 
   const save = async (id: string) => {
