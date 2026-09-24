@@ -122,6 +122,32 @@ fn slug(title: &str) -> String {
     if s.is_empty() { "Untitled".into() } else { s }
 }
 
+// ---------- splash ----------
+
+static LAUNCHED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+const SPLASH_MIN: std::time::Duration = std::time::Duration::from_millis(1200);
+
+/// Called by the UI after its first paint: keep the splash for a short minimum so it never
+/// flickers, then close it and reveal the fully drawn main window.
+#[tauri::command]
+async fn app_ready(app: AppHandle) {
+    let started = *LAUNCHED.get_or_init(std::time::Instant::now);
+    if let Some(rest) = SPLASH_MIN.checked_sub(started.elapsed()) {
+        tokio_sleep(rest).await;
+    }
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+    if let Some(splash) = app.get_webview_window("splashscreen") {
+        let _ = splash.close();
+    }
+}
+
+async fn tokio_sleep(d: std::time::Duration) {
+    let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(d)).await;
+}
+
 // ---------- keys ----------
 
 #[tauri::command]
@@ -417,13 +443,30 @@ async fn export_project(app: AppHandle, dir: String, preset: String) -> Result<V
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    LAUNCHED.get_or_init(std::time::Instant::now);
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            // Safety net: never leave the user staring at the splash if the UI fails to report ready.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(8));
+                if let Some(main) = handle.get_webview_window("main") {
+                    if !main.is_visible().unwrap_or(true) {
+                        let _ = main.show();
+                    }
+                }
+                if let Some(splash) = handle.get_webview_window("splashscreen") {
+                    let _ = splash.close();
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             key_status, set_key, delete_key, read_text, list_projects, create_project, load_project,
             analyze_project, direct_project, ensure_renderer, render_catalog, model_manifest, render_preview,
-            queue_render, resolve_job, export_project, list_styles, set_look
+            queue_render, resolve_job, export_project, list_styles, set_look, app_ready
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

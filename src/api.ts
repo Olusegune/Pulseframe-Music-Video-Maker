@@ -73,6 +73,7 @@ export type KeyStatus = { openai: boolean; fal: boolean; kie: boolean };
 export type EngineEvent = { task: string; event: string; job?: unknown; stage?: string; progress?: number; message?: string; [k: string]: unknown };
 
 export const api = {
+  appReady: () => invoke<void>("app_ready"),
   keyStatus: () => invoke<KeyStatus>("key_status"),
   readText: (path: string) => invoke<string>("read_text", { path }),
   setKey: (provider: string, key: string) => invoke<void>("set_key", { provider, key }),

@@ -18,7 +18,25 @@
         "minWidth": 1100,
         "minHeight": 700,
         "backgroundColor": "#090B0F",
-        "theme": "Dark"
+        "theme": "Dark",
+        "label": "main",
+        "visible": false,
+        "center": true
+      },
+      {
+        "label": "splashscreen",
+        "url": "splash.html",
+        "width": 720,
+        "height": 405,
+        "resizable": false,
+        "decorations": false,
+        "center": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": true,
+        "backgroundColor": "#05070a",
+        "focus": false,
+        "title": "PULSEFRAME"
       }
     ],
     "security": {

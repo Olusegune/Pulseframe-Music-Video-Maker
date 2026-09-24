@@ -1,11 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, errorText, type LoadedProject } from "./api";
 import { Home } from "./Home";
 import { NewProject } from "./NewProject";
 import { Analysis } from "./Analysis";
 import { Studio } from "./Studio";
 import { Settings } from "./Settings";
-import { Splash } from "./Splash";
 import "./styles.css";
 
 type View =
@@ -18,8 +17,8 @@ export default function App() {
   const [newSong, setNewSong] = useState<string | null>(null);
   const [settings, setSettings] = useState(false);
   const [error, setError] = useState("");
-  const [splash, setSplash] = useState(true);
-  const endSplash = useCallback(() => setSplash(false), []);
+  // First paint is done: swap the splash window for this one.
+  useEffect(() => { api.appReady().catch(() => {}); }, []);
 
   const openProject = useCallback(async (dir: string) => {
     setError("");
@@ -33,7 +32,6 @@ export default function App() {
 
   return (
     <>
-      {splash && <Splash onDone={endSplash} />}
       {view.name === "home" && <Home onSong={setNewSong} onOpen={openProject} onSettings={() => setSettings(true)} />}
       {view.name === "analysis" && <Analysis dir={view.dir} title={view.title}
                                              onDone={() => openProject(view.dir)} onBack={() => setView({ name: "home" })} />}
