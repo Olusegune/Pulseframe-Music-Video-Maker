@@ -59,7 +59,7 @@ Then press **Direct My Video** (top right). The Director Engine gives every shot
 
 - **Aspect**: 2.39:1, 21:9, 16:9, 4:3, 1:1, 4:5 or 9:16. Each model uses its closest supported shape.
 - **Quality**: Draft (fastest, cheapest), Standard (720p), High (1080p) or Max (the best the model offers).
-- **Lip-sync**: on Auto, shots where a character sings are rendered with the matching slice of your song so the mouth follows the vocal.
+- **Lip-sync**: on **Auto**, shots where a character sings are rendered with the matching slice of your song so the mouth follows the vocal. **Close-ups get a dedicated lip-sync pass** also re-syncs every singing close-up with a lip-sync model and your isolated vocal once it's rendered (the extra cost is included in the render price). **Off** turns lip-sync off.
 
 ---
 
