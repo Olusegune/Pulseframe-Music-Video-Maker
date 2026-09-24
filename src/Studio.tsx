@@ -8,6 +8,7 @@ import { LookPicker, lookName, normalizeLook, useStyles } from "./Looks";
 import { needsAttention, ReviewSheet } from "./Review";
 import { KeyframePanel } from "./Keyframe";
 import { CreativeDirections } from "./Directions";
+import { CommandToast, DirectorCommand, type CommandResult } from "./Command";
 
 type Selection = { kind: "shot"; id: string } | { kind: "section"; index: number } | null;
 
@@ -33,6 +34,8 @@ export function Studio({ project, onHome, onSettings, onReload }: {
   const [exporting, setExporting] = useState(false);
   const [lookOpen, setLookOpen] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const [commanding, setCommanding] = useState(false);
+  const [cmdResult, setCmdResult] = useState<CommandResult | null>(null);
   const [keyframes, setKeyframes] = useState<Record<string, Record<string, string>>>(project.keyframes ?? {});
   const [look, setLook] = useState(normalizeLook(project.project.look));
   const styles = useStyles();
@@ -44,6 +47,7 @@ export function Studio({ project, onHome, onSettings, onReload }: {
       if (id === "mode_simple") setDirector(false);
       if (id === "mode_director") setDirector(true);
       if (id === "inspector") setInspector((v) => !v);
+      if (id === "command" && plan) setCommanding(true);
     };
     window.addEventListener("pf-menu", on);
     return () => window.removeEventListener("pf-menu", on);
@@ -102,6 +106,7 @@ export function Studio({ project, onHome, onSettings, onReload }: {
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).tagName === "TEXTAREA") return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if (plan) setCommanding(true); return; }
       if (e.code === "Space") { e.preventDefault(); toggle(); }
       if (e.code === "ArrowLeft") seek(time - 5);
       if (e.code === "ArrowRight") seek(time + 5);
@@ -163,6 +168,7 @@ export function Studio({ project, onHome, onSettings, onReload }: {
             <button className={!director ? "on" : ""} onClick={() => setDirector(false)}>Simple</button>
             <button className={director ? "on" : ""} onClick={() => setDirector(true)}>Director Mode</button>
           </div>
+          {plan && <button className="btn ghost" onClick={() => setCommanding(true)} title="Director Command (Ctrl+K)">Direct… <kbd>Ctrl K</kbd></button>}
           {plan && (keys.fal || keys.kie) && <button className="btn" onClick={() => setConfirmAll(true)}
                                    disabled={toRender.length === 0}>Render {toRender.length === shots.length ? "all" : toRender.length} shots</button>}
           {plan && <button className="btn hero" onClick={directVideo} disabled={!!job}>
@@ -206,6 +212,12 @@ export function Studio({ project, onHome, onSettings, onReload }: {
       <Timeline map={map} shots={shots} time={time} sel={sel} flagged={flagged} latest={latest}
                 onSeek={seek} onSelect={(s) => { setSel(s); if (s?.kind === "shot") { const sh = shots.find((x) => x.id === s.id); if (sh) seek(sh.start); } }} />
 
+      {commanding && <DirectorCommand dir={project.dir} selected={sel?.kind === "shot" ? sel.id : null} playhead={time}
+                                      onClose={() => setCommanding(false)} onSettings={onSettings}
+                                      onApplied={(r) => { setCommanding(false); setCmdResult(r); if (r.changed.length) onReload(); }} />}
+      {cmdResult && <CommandToast result={cmdResult} onDismiss={() => setCmdResult(null)}
+                                  onSelect={(id) => { setSel({ kind: "shot", id }); const sh = shots.find((x) => x.id === id); if (sh) seek(sh.start); }}
+                                  onUndo={async () => { try { await api.undoCommand(project.dir, cmdResult.id!); setCmdResult(null); onReload(); } catch (e) { setError(errorText(e)); } }} />}
       {reviewing && <ReviewSheet dir={project.dir} shots={shots} latest={latest} keys={keys} onJobs={mergeJobs}
                                  onSelect={(id) => { setSel({ kind: "shot", id }); const sh = shots.find((x) => x.id === id); if (sh) seek(sh.start); }}
                                  onClose={() => setReviewing(false)} />}

@@ -411,3 +411,28 @@ select.text-input { appearance: auto; }
 .guide th, .guide td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .guide th { color: var(--frost); font-weight: 600; }
 .guide li { margin-bottom: 5px; }
+
+/* ---------- director command ---------- */
+.cmd-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(5,6,9,0.35); display: flex; justify-content: center; align-items: flex-start;
+  padding-top: 14vh; animation: fade var(--t-panel) var(--ease); }
+.cmd { width: min(680px, calc(100vw - 32px)); border-radius: 16px; overflow: hidden; animation: rise var(--t-panel) var(--ease); }
+.cmd-row { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.cmd-label { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--signal-bright); }
+.cmd-input { flex: 1; background: transparent; border: none; outline: none; font-size: 17px; color: var(--frost); }
+kbd { font: 600 10.5px var(--font); color: var(--smoke); border: 1px solid var(--line-strong); border-radius: 5px; padding: 1px 6px; }
+.cmd-hints { display: flex; flex-direction: column; padding: 8px; gap: 2px; }
+.cmd-hints .dim { padding: 4px 8px 6px; }
+.cmd-ex { text-align: left; border: none; background: transparent; color: var(--mist); padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13.5px; }
+.cmd-ex:hover { background: var(--slate); color: var(--frost); }
+.cmd-busy { display: flex; gap: 10px; align-items: center; padding: 16px; color: var(--mist); }
+.cmd-toast { max-width: 520px; }
+.cmd-changed { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.cmd-changed .chip { cursor: pointer; }
+
+/* top bar: controls never wrap; the title yields space instead */
+.topbar > div:first-child { min-width: 0; flex-shrink: 1; overflow: hidden; }
+.topbar .title, .topbar .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .btn, .mode-toggle button { white-space: nowrap; flex-shrink: 0; }
+.topbar .mode-toggle { flex-shrink: 0; }
+.topbar .btn kbd { margin-left: 6px; }
+@media (max-width: 1500px) { .topbar .btn.ghost kbd { display: none; } }

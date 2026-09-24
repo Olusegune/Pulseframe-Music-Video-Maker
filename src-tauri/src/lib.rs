@@ -702,6 +702,31 @@ async fn write_treatment(app: AppHandle, dir: String, index: u32, notes: Option<
     Ok(res)
 }
 
+// ---------- director command ----------
+
+/// A natural-language note re-directs the matching shots (never story, order or timing). Undoable.
+#[tauri::command]
+async fn director_command(app: AppHandle, dir: String, note: String, selected: Option<String>,
+                          playhead: Option<f64>) -> Result<Value, String> {
+    let env = openai_env()?;
+    let d = project_dir(&dir)?.to_string_lossy().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut a = vec!["-m".into(), "pulseframe_analysis.command".into(), "run".into(), d, "--note".into(), note];
+        if let Some(s) = selected { a.extend(["--selected".into(), s]); }
+        if let Some(p) = playhead { a.extend(["--playhead".into(), format!("{p:.2}")]); }
+        run_engine_result(&app, "command", &a, &env)
+    }).await.map_err(err)?
+}
+
+#[tauri::command]
+async fn undo_command(app: AppHandle, dir: String, id: String) -> Result<Value, String> {
+    let d = project_dir(&dir)?.to_string_lossy().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_engine_result(&app, "command", &["-m".into(), "pulseframe_analysis.command".into(), "undo".into(), d,
+                                             "--id".into(), id], &[])
+    }).await.map_err(err)?
+}
+
 // ---------- export ----------
 
 #[tauri::command]
@@ -755,10 +780,13 @@ pub fn run() {
                 .item(&item("mode_director", "Director Mode", Some("CmdOrCtrl+2"))?)
                 .item(&item("inspector", "Toggle Inspector", Some("CmdOrCtrl+I"))?)
                 .build()?;
+            let direct = SubmenuBuilder::new(app, "Direct")
+                .item(&item("command", "Director Command…", Some("CmdOrCtrl+K"))?)
+                .build()?;
             let help = SubmenuBuilder::new(app, "Help")
                 .item(&item("help", "Getting Started", Some("F1"))?)
                 .build()?;
-            MenuBuilder::new(app).item(&file).item(&view).item(&help).build()
+            MenuBuilder::new(app).item(&file).item(&view).item(&direct).item(&help).build()
         })
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
@@ -785,7 +813,7 @@ pub fn run() {
             analyze_project, direct_project, ensure_renderer, render_catalog, model_manifest, render_preview,
             queue_render, resolve_job, export_project, list_styles, set_look, app_ready, render_estimate,
             save_project, save_project_as, launch_path, set_project_settings, import_reference, set_keyframe,
-            creative_directions, write_treatment
+            creative_directions, write_treatment, director_command, undo_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

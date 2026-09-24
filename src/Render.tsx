@@ -142,6 +142,8 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
                   {j.review.accepted ? "Kept by you. " : ""}{j.review.summary}
                   {needsAttention(j) && <ul className="ri-issues">{(j.review.issues ?? []).map((i, k) => <li key={k}>{i.detail}</li>)}</ul>}
                 </div>)}
+              {j.state === "ready" && shot.revised && j.created < shot.revised && j.kind !== "lipsync" &&
+                <div className="take-err" style={{ color: "var(--warning)" }}>Direction changed after this take. Render a new take to see it.</div>}
               {j.state === "ready" && j.look && j.look !== lookId &&
                 <div className="take-err" style={{ color: "var(--warning)" }}>Rendered in an earlier look. Render a new take to match.</div>}
               {j.cost != null && <div className="dim num">Cost: {j.cost} {j.cost_unit ?? ""}</div>}

@@ -26,8 +26,10 @@ export async function installMock() {
       case "load_project": return noScript
         ? { dir: "mock", project: { ...project, look: { style: "auto" } }, song_path: url("song.wav"), song_map, production: null, directed: null, jobs: [], concepts }
         : { dir: "mock", project, song_path: url("song.wav"), song_map, production, directed: null, jobs };
-      case "key_status": return { openai: false, fal: true, kie: false, google: false };
+      case "key_status": return { openai: true, fal: true, kie: false, google: false };
       case "set_keyframe": return null;
+      case "director_command": return new Promise((r) => setTimeout(() => r({ id: "c1", summary: "The second chorus is redirected with stronger physical urgency, faster camera language and higher performance intensity.", not_done: "", changed: ["S07-01", "S07-02", "S07-03", "S07-04"] }), 900));
+      case "undo_command": return { id: "c1", restored: [] };
       case "render_preview": return preview;
       case "render_catalog": return [{ provider: "fal", model: preview.manifest.model, title: preview.manifest.title, category: "image-to-video" }];
       case "queue_render": return [];

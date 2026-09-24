@@ -91,6 +91,17 @@ Pinned values win over PULSEFRAME's choices for that shot. **Reset** returns a f
 
 The **Look** picker in Director Mode also lets you edit the exact style wording and "avoid" list used for every shot.
 
+### Director Command
+
+Press **Ctrl+K** (or **Direct…** in the top bar) and give a note in plain words:
+
+- *"Make the second chorus much more energetic"*
+- *"Less movement during Verse 1"*
+- *"Make this shot more intimate"* (with a shot selected)
+- *"Warmer, golden light for the final chorus"*
+
+PULSEFRAME works out which shots the note is about and re-directs them: acting, expression, movement, camera, lighting and the shot description. Your story beats, their order and the timing never change. A summary shows what changed, with **Undo**. Takes rendered before a change are marked so you know to render a new take.
+
 ---
 
 ## 7. Review
@@ -137,5 +148,6 @@ Click **Export** on the left rail (`Ctrl+E`). Choose **YouTube 16:9**, **TikTok 
 | Export | `Ctrl+E` |
 | Simple / Director Mode | `Ctrl+1` / `Ctrl+2` |
 | Toggle inspector | `Ctrl+I` |
+| Director Command | `Ctrl+K` |
 | Play / pause | `Space` |
 | Back / forward 5 seconds | `←` / `→` |

@@ -20,7 +20,7 @@ export type Shot = {
   purpose?: string; emotion?: string; performance_intensity?: number; performance?: string;
   expression?: string; movement?: string; lens?: string; camera_movement?: string; camera_energy?: string;
   lighting?: string; environment?: string; wardrobe?: string; continuity?: string; sync_event?: string;
-  visual_prompt?: string; dropped_beats?: string[];
+  visual_prompt?: string; dropped_beats?: string[]; revised?: number;
 };
 export type Scene = {
   number: number; heading: string; start: number; end: number; notes: Record<string, string>;
@@ -106,6 +106,9 @@ export const api = {
   creativeDirections: (dir: string, notes = "") => invoke<{ concepts: Concept[] }>("creative_directions", { dir, notes }),
   writeTreatment: (dir: string, index: number, notes = "") =>
     invoke<{ scenes: number; shots: number; title: string }>("write_treatment", { dir, index, notes }),
+  directorCommand: (dir: string, note: string, selected: string | null, playhead: number | null) =>
+    invoke<{ id: string | null; summary: string; not_done: string; changed: string[] }>("director_command", { dir, note, selected, playhead }),
+  undoCommand: (dir: string, id: string) => invoke<{ id: string; restored: string[] }>("undo_command", { dir, id }),
   saveProject: (dir: string) => invoke<{ saved: number }>("save_project", { dir }),
   saveProjectAs: (dir: string, dest: string) => invoke<string>("save_project_as", { dir, dest }),
   launchPath: () => invoke<string | null>("launch_path"),
