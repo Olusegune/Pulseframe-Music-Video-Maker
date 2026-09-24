@@ -111,6 +111,10 @@ export const api = {
   directorCommand: (dir: string, note: string, selected: string | null, playhead: number | null) =>
     invoke<{ id: string | null; summary: string; not_done: string; changed: string[] }>("director_command", { dir, note, selected, playhead }),
   undoCommand: (dir: string, id: string) => invoke<{ id: string; restored: string[] }>("undo_command", { dir, id }),
+  addReference: (dir: string, path: string, role: "cast" | "characters" | "sets", name: string | null) =>
+    invoke<{ characters?: string; sets?: string; cast?: Record<string, string> }>("add_reference", { dir, path, role, name }),
+  removeReference: (dir: string, role: string, name: string | null) =>
+    invoke<{ characters?: string; sets?: string; cast?: Record<string, string> }>("remove_reference", { dir, role, name }),
   saveProject: (dir: string) => invoke<{ saved: number }>("save_project", { dir }),
   saveProjectAs: (dir: string, dest: string) => invoke<string>("save_project_as", { dir, dest }),
   launchPath: () => invoke<string | null>("launch_path"),

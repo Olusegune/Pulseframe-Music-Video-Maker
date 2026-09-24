@@ -4,6 +4,7 @@ import { api, errorText } from "./api";
 import { Close, Note, Script } from "./icons";
 import { LookPicker, lookName, useStyles } from "./Looks";
 import type { Look } from "./api";
+import { MaterialsChecklist, materialItems, ReferencePicker, savePendingRefs, TIPS, type PendingRefs } from "./Materials";
 
 const baseName = (p: string) => p.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, "");
 
@@ -18,6 +19,7 @@ export function NewProject({ songPath, onCancel, onCreated }: {
   const [error, setError] = useState("");
   const [look, setLook] = useState<Look>({ style: "auto" });
   const [picking, setPicking] = useState(false);
+  const [refs, setRefs] = useState<PendingRefs>({ cast: [], sets: null });
   const styles = useStyles();
 
   const loadLyrics = async () => {
@@ -31,7 +33,9 @@ export function NewProject({ songPath, onCancel, onCreated }: {
   const create = async () => {
     setBusy(true); setError("");
     try {
-      onCreated(await api.createProject(songPath, title.trim() || "Untitled", lyrics || null, script, look));
+      const dir = await api.createProject(songPath, title.trim() || "Untitled", lyrics || null, script, look);
+      await savePendingRefs(dir, refs);
+      onCreated(dir);
     } catch (e) { setError(errorText(e)); setBusy(false); }
   };
 
@@ -69,6 +73,10 @@ export function NewProject({ songPath, onCancel, onCreated }: {
         </div>
 
         <div className="field">
+          <label>Characters <span className="opt">Recommended · keeps faces and outfits the same in every shot</span></label>
+          <ReferencePicker value={refs} onChange={setRefs} />
+        </div>
+        <div className="field">
           <label>Look <span className="opt">Optional · applied to every shot</span></label>
           <div className="file-row"><span className="name">{lookName(styles, look)}</span>
             <button className="btn ghost" onClick={() => setPicking(true)}>Change</button></div>
@@ -76,6 +84,12 @@ export function NewProject({ songPath, onCancel, onCreated }: {
         {picking && <LookPicker value={look} director={false} onCancel={() => setPicking(false)}
                                 onSave={(l) => { setLook(l); setPicking(false); }} />}
 
+        <details className="mat-tips" open>
+          <summary>What gives the best results</summary>
+          <MaterialsChecklist items={materialItems({ song: true, lyrics: !!lyrics.trim(), script: !!script, plan: false,
+            refs: { cast: Object.fromEntries(refs.cast.map((c) => [c.name, c.path])), sets: refs.sets ?? undefined }, look: look.style !== "auto" })} />
+          <ul>{TIPS.map((t) => <li key={t}>{t}</li>)}</ul>
+        </details>
         {error && <div className="error-text">{error}</div>}
         <div className="sheet-actions">
           <button className="btn ghost" onClick={onCancel}>Cancel</button>

@@ -33,8 +33,9 @@ You can start without any keys: song analysis and planning from a script work of
 2. Give it a title.
 3. **Lyrics** (optional, but worth it): paste them with section tags like `[Verse 1]`, `[Chorus]`, `[Bridge]`. PULSEFRAME uses them to find the song's real structure and to time every line.
 4. **Script** (optional): if you've written scenes and shots (PDF or text), add it. PULSEFRAME will follow it exactly.
-5. **Look** (optional): pick an art or animation style, e.g. *Feature animation 3D*, *Anime-inspired*, *Claymation*, *Cinematic live action*. Leave it on **Auto** to match your character art.
-6. Click **Listen to the song**.
+5. **Characters** (recommended): add one image per character with their name, e.g. *Sege*. This is the biggest factor for keeping the same faces, hair and outfits in every shot. Optionally add a locations & props image. The sheet shows a **What gives the best results** checklist as you go.
+6. **Look** (optional): pick an art or animation style, e.g. *Feature animation 3D*, *Anime-inspired*, *Claymation*, *Cinematic live action*. Leave it on **Auto** to match your character art.
+7. Click **Listen to the song**.
 
 PULSEFRAME analyses tempo, beats, bars, energy, sections, the vocal and lyric timing. When it says **"I understand the song."**, click **Enter the Studio**.
 
@@ -66,6 +67,21 @@ Then press **Direct My Video** (top right). The Director Engine gives every shot
 - **Aspect**: 2.39:1, 21:9, 16:9, 4:3, 1:1, 4:5 or 9:16. Each model uses its closest supported shape.
 - **Quality**: Draft (fastest, cheapest), Standard (720p), High (1080p) or Max (the best the model offers).
 - **Lip-sync**: on **Auto**, shots where a character sings are rendered with the matching slice of your song so the mouth follows the vocal. **Close-ups get a dedicated lip-sync pass** also re-syncs every singing close-up with a lip-sync model and your isolated vocal once it's rendered (the extra cost is included in the render price). **Off** turns lip-sync off.
+
+### What gives the best results
+
+The **Materials** checklist (New Project sheet and the Studio's Project panel) shows what PULSEFRAME can use and what's missing:
+
+| Material | | Why it helps |
+|---|---|---|
+| Song | required | The master timeline; every cut lands on its beats |
+| Lyrics with section tags | recommended | Real song structure, line timing and lip-sync |
+| Character images | recommended | Same faces, hair and outfits in every shot |
+| Locations & props | optional | Consistent places, props and colours |
+| Script or story | optional | Your scenes and shots followed exactly; otherwise three directions are proposed |
+| Look | optional | One art or animation style for every shot |
+
+Tips: one character per image (face and full body, plain background); **no text, labels, logos or collages** in reference images, because models copy them into the video; name characters exactly as in your script; tag lyrics with `[Verse 1]`, `[Chorus]`… on their own lines.
 
 ---
 

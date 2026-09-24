@@ -18,7 +18,8 @@ export async function installMock() {
         fixes: ["Sege has a neatly trimmed beard.", "Hands have five fingers."] } },
     { id: "j3", shot_id: "S01-03", plan: "production", provider: "kie", model: "bytedance/seedance-2", state: "uncertain", overrides: {}, provider_job_id: null, output: null, error: "The app closed while this shot was being sent. It may already be rendering (and billed). Check your provider dashboard before retrying.", cost: null, created: now, updated: now, attempts: 1, shot_start: 4.5, shot_end: 6.5 },
   ];
-  const project = { title: "Exit Plan", state: "analyzed", song: "song.wav", aspect_ratio: "2.39:1", artist: "Uncle Sege", look: { style: "feature-3d", notes: "Match the character sheet exactly." } };
+  const project = { title: "Exit Plan", state: "analyzed", song: "song.wav", aspect_ratio: "2.39:1", artist: "Uncle Sege", look: { style: "feature-3d", notes: "Match the character sheet exactly." }, lyrics: "lyrics.txt", script: "script.pdf",
+    references: { cast: { Sege: "assets/refs/character_sege.png", Amara: "assets/refs/character_amara.png" } } };
   mockWindows("main");
   mockIPC((cmd) => {
     switch (cmd) {
@@ -28,6 +29,7 @@ export async function installMock() {
         : { dir: "mock", project, song_path: url("song.wav"), song_map, production, directed: null, jobs };
       case "key_status": return { openai: true, fal: true, kie: false, google: false };
       case "set_keyframe": return null;
+      case "add_reference": case "remove_reference": return { cast: { Sege: "x.png" } };
       case "director_command": return new Promise((r) => setTimeout(() => r({ id: "c1", summary: "The second chorus is redirected with stronger physical urgency, faster camera language and higher performance intensity.", not_done: "", changed: ["S07-01", "S07-02", "S07-03", "S07-04"] }), 900));
       case "undo_command": return { id: "c1", restored: [] };
       case "render_preview": return preview;

@@ -828,6 +828,59 @@ fn set_keyframe(dir: String, plan: String, shot: String, image: Option<String>) 
     write_json(&path, &kf)
 }
 
+/// Add a reference image to the project's materials.
+/// role: "cast" (one clean image per character; needs `name`), "characters" (a combined character sheet),
+/// "sets" (locations / props / palette sheet). Renders use them automatically.
+#[tauri::command]
+fn add_reference(dir: String, path: String, role: String, name: Option<String>) -> Result<Value, String> {
+    let d = project_dir(&dir)?;
+    let src = PathBuf::from(&path);
+    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    if !["png", "jpg", "jpeg", "webp"].contains(&ext.as_str()) {
+        return Err("Use a PNG, JPG or WebP image.".into());
+    }
+    let refs = d.join("assets").join("refs");
+    fs::create_dir_all(&refs).map_err(err)?;
+    let base = match role.as_str() {
+        "cast" => format!("character_{}", slug(name.as_deref().unwrap_or("character")).to_lowercase().replace(' ', "_")),
+        "characters" => "character_sheet".into(),
+        "sets" => "sets_and_props".into(),
+        _ => return Err("Unknown material type.".into()),
+    };
+    let rel = format!("assets/refs/{base}.{ext}");
+    fs::copy(&src, d.join(&rel)).map_err(|e| format!("Couldn't copy the image: {e}"))?;
+    let mut p = read_json(&d.join("project.json")).ok_or("Missing project file")?;
+    if !p["references"].is_object() {
+        p["references"] = json!({});
+    }
+    if role == "cast" {
+        let n = name.filter(|n| !n.trim().is_empty()).ok_or("Give the character a name.")?;
+        if !p["references"]["cast"].is_object() {
+            p["references"]["cast"] = json!({});
+        }
+        p["references"]["cast"][n.trim()] = json!(rel);
+    } else {
+        p["references"][&role] = json!(rel);
+    }
+    write_json(&d.join("project.json"), &p)?;
+    Ok(p["references"].clone())
+}
+
+#[tauri::command]
+fn remove_reference(dir: String, role: String, name: Option<String>) -> Result<Value, String> {
+    let d = project_dir(&dir)?;
+    let mut p = read_json(&d.join("project.json")).ok_or("Missing project file")?;
+    if role == "cast" {
+        if let (Some(n), Some(c)) = (name, p["references"]["cast"].as_object_mut()) {
+            c.remove(&n);
+        }
+    } else if let Some(r) = p["references"].as_object_mut() {
+        r.remove(&role);
+    }
+    write_json(&d.join("project.json"), &p)?;
+    Ok(p["references"].clone())
+}
+
 // ---------- looks ----------
 
 #[tauri::command]
@@ -1020,7 +1073,7 @@ pub fn run() {
             key_status, set_key, delete_key, read_text, list_projects, create_project, load_project,
             analyze_project, direct_project, ensure_renderer, render_catalog, model_manifest, render_preview,
             queue_render, resolve_job, export_project, list_styles, set_look, app_ready, render_estimate,
-            save_project, save_project_as, launch_path, engine_status, setup_engine, set_project_settings, import_reference, set_keyframe,
+            save_project, save_project_as, launch_path, engine_status, setup_engine, set_project_settings, import_reference, set_keyframe, add_reference, remove_reference,
             creative_directions, write_treatment, director_command, undo_command
         ])
         .run(tauri::generate_context!())

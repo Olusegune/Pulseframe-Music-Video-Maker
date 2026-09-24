@@ -9,6 +9,7 @@ import { needsAttention, ReviewSheet } from "./Review";
 import { KeyframePanel } from "./Keyframe";
 import { CreativeDirections } from "./Directions";
 import { CommandToast, DirectorCommand, type CommandResult } from "./Command";
+import { MaterialsPanel } from "./Materials";
 
 type Selection = { kind: "shot"; id: string } | { kind: "section"; index: number } | null;
 
@@ -343,6 +344,7 @@ function Inspector({ sel, shots, scenes, map, plan, director, project, onClose, 
           <span className="k">Shots</span><span className="v num">{shots.length}</span>
           <span className="k">Renderer</span><span className="v">Auto</span>
         </div></div>
+        <MaterialsPanel project={project} hasPlan={!!plan} onChanged={() => {}} />
         <ProjectSettingsRow project={project} />
         <div className="insp-section look-row">
           <h4>Look</h4>
