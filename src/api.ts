@@ -33,7 +33,8 @@ export type Plan = { meta: Record<string, string>; characters: Character[]; scen
 export type ProjectSummary = { dir: string; title: string; state: string; modified: number; song: string };
 export type LoadedProject = {
   dir: string;
-  project: { title: string; state: string; song: string; lyrics?: string; script?: string; aspect_ratio?: string; artist?: string; look?: Look | string };
+  project: { title: string; state: string; song: string; lyrics?: string; script?: string; aspect_ratio?: string; artist?: string; look?: Look | string;
+    quality?: ProjectSettings["quality"]; lip_sync?: ProjectSettings["lip_sync"] };
   song_path: string | null;
   song_map: SongMap | null;
   production: Plan | null;
@@ -49,6 +50,7 @@ export type Job = {
   created: number; updated: number; attempts: number; shot_start: number; shot_end: number; look?: string;
   fix_notes?: string[]; review?: Review;
 };
+export type ProjectSettings = { aspect_ratio: string; quality: "draft" | "standard" | "high" | "max"; lip_sync: "auto" | "off" };
 export type Estimate = { provider: string; model: string; shots: number; usd: number | null; usd_known: number;
   unknown: number; basis: string; kie_credits?: number };
 export type ReviewIssue = { kind: string; severity: "minor" | "major"; detail: string; fix: string };
@@ -57,7 +59,7 @@ export type Review = {
   fixes?: string[]; visual?: { model: string } | null; visual_error?: string; accepted?: boolean; error?: string;
 };
 export type ManifestInput = {
-  name: string; type: string; items: string | null; enum: (string | number)[] | null; default: unknown;
+  name: string; type: string; items: string | null; enum: (string | number)[] | null; default: unknown; max_length?: number | null;
   minimum: number | null; maximum: number | null; max_items: number | null; description: string; required: boolean;
 };
 export type Manifest = {
@@ -83,6 +85,9 @@ export type EngineEvent = { task: string; event: string; job?: unknown; stage?: 
 
 export const api = {
   appReady: () => invoke<void>("app_ready"),
+  setProjectSettings: (dir: string, settings: Partial<ProjectSettings>) => invoke<void>("set_project_settings", { dir, settings }),
+  importReference: (dir: string, path: string) =>
+    invoke<{ ref: string; kind: string; name: string; path: string }>("import_reference", { dir, path }),
   saveProject: (dir: string) => invoke<{ saved: number }>("save_project", { dir }),
   saveProjectAs: (dir: string, dest: string) => invoke<string>("save_project_as", { dir, dest }),
   launchPath: () => invoke<string | null>("launch_path"),
@@ -104,7 +109,7 @@ export const api = {
   renderCatalog: (provider: string) => invoke<CatalogItem[]>("render_catalog", { provider }),
   modelManifest: (provider: string, model: string) => invoke<Manifest>("model_manifest", { provider, model }),
   renderPreview: (dir: string, shot: string, provider: string, model: string | null, overrides: Record<string, unknown>) =>
-    invoke<{ manifest: Manifest; payload: Record<string, unknown> }>("render_preview", { dir, shot, provider, model, overrides }),
+    invoke<{ manifest: Manifest; payload: Record<string, unknown>; lip_sync?: boolean; singing?: { performer: string; lyrics: string[] } | null }>("render_preview", { dir, shot, provider, model, overrides }),
   queueRender: (dir: string, shots: string[], provider: string, model: string | null, overrides: Record<string, unknown>,
                 fixNotes: string[] = []) =>
     invoke<Job[]>("queue_render", { dir, shots, provider, model, overrides, fixNotes }),

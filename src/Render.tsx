@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, AUTO_MODEL, errorText, type CatalogItem, type Estimate, type Job, type KeyStatus, type Manifest, type ManifestInput, type Shot } from "./api";
 import * as I from "./icons";
 import { needsAttention } from "./Review";
+import { MediaInput, mediaKind } from "./Media";
 
 export const PROVIDER_NAME: Record<string, string> = { fal: "fal.ai", kie: "Kie.ai" };
 export const ACTIVE_STATES = ["queued", "submitting", "submitted"];
@@ -49,6 +50,8 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [showRaw, setShowRaw] = useState(false);
+  const [lipSync, setLipSync] = useState(false);
+  const [singing, setSinging] = useState<{ performer: string; lyrics: string[] } | null>(null);
 
   const history = jobs.filter((j) => j.shot_id === shot.id && j.state !== "dismissed").sort((a, b) => b.created - a.created);
   const active = history.find((j) => ACTIVE_STATES.includes(j.state));
@@ -65,7 +68,7 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
     let live = true;
     setBusy("Reading model…"); setError("");
     api.renderPreview(dir, shot.id, provider, model, settled)
-      .then((r) => { if (!live) return; setManifest(r.manifest); setAuto(r.payload); })
+      .then((r) => { if (!live) return; setManifest(r.manifest); setAuto(r.payload); setLipSync(!!r.lip_sync); setSinging(r.singing ?? null); })
       .catch((e) => live && setError(errorText(e)))
       .finally(() => live && setBusy(""));
     return () => { live = false; };
@@ -101,7 +104,9 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
                  onChange={(e) => setModel(e.target.value)} onBlur={(e) => { if (!e.target.value) setModel(AUTO_MODEL[provider]); setPins({}); }} />
           <datalist id="model-list">{catalog.map((c) => <option key={c.model} value={c.model}>{c.title}</option>)}</datalist>
           <div className="hint-row">{catalog.length ? `${catalog.length} ${PROVIDER_NAME[provider]} video models` : "Loading models…"} · Auto = {AUTO_MODEL[provider]}</div>
-          {manifest && <ModelInputs manifest={manifest} auto={auto} pins={pins} setPins={setPins} />}
+          {singing && <div className="lip-note"><I.Note size={14} /> {lipSync ? `Lip-sync: ${singing.performer} sings “${singing.lyrics.join(" / ")}” to the song slice under this shot.`
+            : `${singing.performer} sings here, but this model can't take reference audio, so lip-sync is off.`}</div>}
+          {manifest && <ModelInputs dir={dir} manifest={manifest} auto={auto} pins={pins} setPins={setPins} />}
           <button className="btn ghost small" onClick={() => setShowRaw((v) => !v)}>{showRaw ? "Hide" : "Show"} exact request</button>
           {showRaw && <pre className="raw">{JSON.stringify(auto, null, 1)}</pre>}
         </>
@@ -150,15 +155,26 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
 const shortModel = (m: string) => m.split("/").slice(-2).join("/");
 
 /** Every input the model exposes, generated from its manifest. Auto values come from the Shot Contract. */
-function ModelInputs({ manifest, auto, pins, setPins }: {
-  manifest: Manifest; auto: Record<string, unknown>; pins: Record<string, unknown>; setPins: (p: Record<string, unknown>) => void;
+const GROUPS: [string, (f: ManifestInput, role?: string) => boolean][] = [
+  ["Prompt", (_f, r) => r === "prompt" || r === "negative_prompt"],
+  ["References", (f) => mediaKind(f) !== null],
+  ["Format & quality", (f, r) => ["duration", "aspect_ratio", "resolution"].includes(r ?? "") || /fps|frame_rate|quality|bitrate|codec|size/.test(f.name)],
+  ["Motion & camera", (f) => /camera|motion|movement|strength|dynamic/.test(f.name)],
+  ["Everything else", () => true],
+];
+
+function ModelInputs({ dir, manifest, auto, pins, setPins }: {
+  dir: string; manifest: Manifest; auto: Record<string, unknown>; pins: Record<string, unknown>; setPins: (p: Record<string, unknown>) => void;
 }) {
   const roleOf = useMemo(() => Object.fromEntries(Object.entries(manifest.roles).map(([r, f]) => [f, r])), [manifest]);
   const pin = (name: string, v: unknown) => setPins({ ...pins, [name]: v });
   const unpin = (name: string) => { const n = { ...pins }; delete n[name]; setPins(n); };
+  const grouped = GROUPS.map(([g]) => [g, [] as ManifestInput[]] as const);
+  for (const f of manifest.inputs) grouped[GROUPS.findIndex(([, t]) => t(f, roleOf[f.name]))][1].push(f);
   return (
     <div className="model-inputs">
-      {manifest.inputs.map((f) => {
+      {grouped.filter(([, list]) => list.length).map(([g, list]) => <div key={g} className="mi-group"><h5>{g}</h5>
+      {list.map((f) => {
         const pinned = f.name in pins;
         const value = pinned ? pins[f.name] : auto[f.name] ?? f.default;
         const origin = pinned ? "Pinned" : f.name in auto ? "Auto" : f.default !== null && f.default !== undefined ? "Default" : "Unset";
@@ -170,11 +186,13 @@ function ModelInputs({ manifest, auto, pins, setPins }: {
               <span className={`mi-origin ${origin.toLowerCase()}`}>{origin}</span>
               {pinned && <button className="link" onClick={() => unpin(f.name)}>Reset</button>}
             </div>
-            <InputWidget f={f} value={value} onChange={(v) => pin(f.name, v)} />
+            {mediaKind(f) ? <MediaInput dir={dir} kind={mediaKind(f)!} multiple={f.type === "array"} value={value} max={f.max_items}
+                                        onChange={(v) => pin(f.name, v)} />
+              : <InputWidget f={f} value={value} onChange={(v) => pin(f.name, v)} />}
             {f.description && <div className="mi-desc">{f.description.length > 160 ? f.description.slice(0, 157) + "…" : f.description}</div>}
           </div>
         );
-      })}
+      })}</div>)}
     </div>
   );
 }

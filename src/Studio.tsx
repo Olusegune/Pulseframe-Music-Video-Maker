@@ -323,6 +323,7 @@ function Inspector({ sel, shots, scenes, map, plan, director, project, onClose, 
           <span className="k">Shots</span><span className="v num">{shots.length}</span>
           <span className="k">Renderer</span><span className="v">Auto</span>
         </div></div>
+        <ProjectSettingsRow project={project} />
         <div className="insp-section look-row">
           <h4>Look</h4>
           <div className="file-row"><span className="name">{lookLabel}</span><button className="btn ghost small" onClick={onLook}>Change</button></div>
@@ -493,4 +494,48 @@ function CardState({ job, flagged }: { job?: Job; flagged: boolean }) {
   if (job?.state === "uncertain") return <span style={{ color: "var(--warning)" }}><I.Alert size={10} /> Check</span>;
   if (flagged) return <><I.Alert size={10} /> Review</>;
   return <><I.Circle size={10} /> Planned</>;
+}
+
+const ASPECTS = [
+  ["2.39:1", "Cinema scope"], ["21:9", "Ultra-wide"], ["16:9", "Widescreen · YouTube"], ["4:3", "Classic"],
+  ["1:1", "Square"], ["4:5", "Portrait feed"], ["9:16", "Vertical · TikTok, Reels"],
+];
+const QUALITY = [
+  ["draft", "Draft · fastest, cheapest"], ["standard", "Standard · 720p"], ["high", "High · 1080p"], ["max", "Max · best the model offers"],
+];
+
+/** Aspect, quality and lip-sync for every render in the project. Changes apply to new takes. */
+function ProjectSettingsRow({ project }: { project: LoadedProject }) {
+  const [s, setS] = useState({
+    aspect_ratio: project.project.aspect_ratio ?? "16:9", quality: project.project.quality ?? "standard",
+    lip_sync: project.project.lip_sync ?? "auto",
+  });
+  const [err, setErr] = useState("");
+  const change = async (k: keyof typeof s, v: string) => {
+    const next = { ...s, [k]: v };
+    setS(next); setErr("");
+    try { await api.setProjectSettings(project.dir, { [k]: v }); } catch (e) { setErr(errorText(e)); }
+  };
+  return (
+    <div className="insp-section">
+      <h4>Frame & quality</h4>
+      <div className="kv settings-kv">
+        <span className="k">Aspect</span>
+        <select className="text-input" value={s.aspect_ratio} onChange={(e) => change("aspect_ratio", e.target.value)}>
+          {ASPECTS.map(([v, l]) => <option key={v} value={v}>{v} · {l}</option>)}
+        </select>
+        <span className="k">Quality</span>
+        <select className="text-input" value={s.quality} onChange={(e) => change("quality", e.target.value)}>
+          {QUALITY.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <span className="k">Lip-sync</span>
+        <select className="text-input" value={s.lip_sync} onChange={(e) => change("lip_sync", e.target.value)}>
+          <option value="auto">Auto · singing shots follow the vocal</option>
+          <option value="off">Off</option>
+        </select>
+      </div>
+      <p className="dim" style={{ marginTop: 6 }}>Applies to new takes. Each model uses its closest supported option.</p>
+      {err && <div className="error-text">{err}</div>}
+    </div>
+  );
 }

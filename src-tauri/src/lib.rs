@@ -557,6 +557,69 @@ fn launch_path() -> Option<String> {
     std::env::args().skip(1).find(|a| a.to_lowercase().ends_with(&format!(".{DOC_EXT}")) || Path::new(a).join("project.json").exists())
 }
 
+// ---------- project settings & reference media ----------
+
+const ASPECTS: [&str; 9] = ["2.39:1", "21:9", "16:9", "4:3", "1:1", "4:5", "3:4", "9:16", "9:21"];
+
+/// Project-wide render settings: aspect ratio, quality tier, lip-sync. Applies to every future render.
+#[tauri::command]
+fn set_project_settings(dir: String, settings: Value) -> Result<(), String> {
+    let d = project_dir(&dir)?;
+    let mut patch = serde_json::Map::new();
+    if let Some(a) = settings["aspect_ratio"].as_str() {
+        if !ASPECTS.contains(&a) {
+            return Err("Unsupported aspect ratio.".into());
+        }
+        patch.insert("aspect_ratio".into(), json!(a));
+    }
+    if let Some(q) = settings["quality"].as_str() {
+        if !["draft", "standard", "high", "max"].contains(&q) {
+            return Err("Unknown quality.".into());
+        }
+        patch.insert("quality".into(), json!(q));
+    }
+    if let Some(l) = settings["lip_sync"].as_str() {
+        patch.insert("lip_sync".into(), json!(if l == "off" { "off" } else { "auto" }));
+    }
+    update_project(&d, Value::Object(patch))
+}
+
+/// Copy a user-chosen image, video or audio file into the project so renders can use it.
+/// Returns a `project:` reference that the renderer uploads to the provider when it's needed.
+#[tauri::command]
+fn import_reference(dir: String, path: String) -> Result<Value, String> {
+    let d = project_dir(&dir)?;
+    let src = PathBuf::from(&path);
+    let meta = fs::metadata(&src).map_err(|_| "That file can't be read.".to_string())?;
+    if meta.len() > 500 * 1024 * 1024 {
+        return Err("That file is larger than 500 MB.".into());
+    }
+    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let kind = match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" => "image",
+        "mp4" | "mov" | "webm" | "mkv" | "m4v" => "video",
+        "mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg" => "audio",
+        _ => return Err("Use an image, video or audio file.".into()),
+    };
+    let refs = d.join("assets").join("refs");
+    fs::create_dir_all(&refs).map_err(err)?;
+    let stem = slug(src.file_stem().and_then(|s| s.to_str()).unwrap_or("reference"));
+    let mut name = format!("{stem}.{ext}");
+    let mut n = 2;
+    while refs.join(&name).exists() {
+        if fs::metadata(refs.join(&name)).map(|m| m.len()).ok() == Some(meta.len()) {
+            break; // same file already imported
+        }
+        name = format!("{stem} {n}.{ext}");
+        n += 1;
+    }
+    if !refs.join(&name).exists() {
+        fs::copy(&src, refs.join(&name)).map_err(|e| format!("Couldn't copy the file: {e}"))?;
+    }
+    Ok(json!({"ref": format!("project:assets/refs/{name}"), "kind": kind, "name": name,
+              "path": refs.join(&name).to_string_lossy()}))
+}
+
 // ---------- looks ----------
 
 #[tauri::command]
@@ -654,7 +717,7 @@ pub fn run() {
             key_status, set_key, delete_key, read_text, list_projects, create_project, load_project,
             analyze_project, direct_project, ensure_renderer, render_catalog, model_manifest, render_preview,
             queue_render, resolve_job, export_project, list_styles, set_look, app_ready, render_estimate,
-            save_project, save_project_as, launch_path
+            save_project, save_project_as, launch_path, set_project_settings, import_reference
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

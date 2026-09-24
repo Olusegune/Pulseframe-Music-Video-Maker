@@ -76,7 +76,8 @@ def _field(spec: dict, name: str, raw: dict, required: set) -> dict:
     enum = raw.get("enum") or next((x.get("enum") for x in raw.get("anyOf", []) if isinstance(x, dict) and x.get("enum")), None)
     return {"name": name, "type": types[0] if types else "string", "items": item.get("type"),
             "enum": enum, "default": raw.get("default"), "minimum": raw.get("minimum"), "maximum": raw.get("maximum"),
-            "max_items": raw.get("maxItems"), "description": (raw.get("description") or "").strip(),
+            "max_items": raw.get("maxItems"), "max_length": raw.get("maxLength"),
+            "description": (raw.get("description") or "").strip(),
             "required": name in required}
 
 
@@ -240,37 +241,137 @@ def _duration_value(field: dict, need: float):
     return val if field["type"] == "integer" else str(val) if field["type"] == "string" else val
 
 
+INTENSITY = [(3, "restrained, almost still, the feeling held just under the surface"),
+             (6, "grounded and natural, clearly felt but never pushed"),
+             (8, "heightened and visible, the emotion driving the body"),
+             (11, "at full intensity, the emotion overwhelming control")]
+QUALITY_TIERS = ("draft", "standard", "high", "max")
+
+
+def _intensity_words(n) -> str:
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return ""
+    return next(w for lim, w in INTENSITY if n < lim)
+
+
+def _character(plan: dict, name: str) -> dict:
+    return next((c for c in plan.get("characters", []) if c.get("name", "").lower() == name.lower()), {})
+
+
+def acting_direction(shot: dict, plan: dict) -> str:
+    """Actor-language direction for the performance, the part video models most often get wrong.
+
+    Combines the shot's directed performance (emotion, intensity, intention, body, face, gaze, movement)
+    with each performer's standing acting notes from the character bible.
+    """
+    lines = []
+    emotion, level = shot.get("emotion"), _intensity_words(shot.get("performance_intensity"))
+    if emotion or level:
+        lines.append(f"Emotion: {emotion or 'as the moment requires'}" + (f", played {level}" if level else "") + ".")
+    if shot.get("performance"):
+        lines.append(f"Performance: {shot['performance'].rstrip('.')}.")
+    if shot.get("expression"):
+        lines.append(f"Face: {shot['expression'].rstrip('.')}.")
+    if shot.get("movement"):
+        lines.append(f"Body and blocking: {shot['movement'].rstrip('.')}.")
+    for name in shot.get("performers", []):
+        notes = _character(plan, name).get("acting_notes")
+        if notes:
+            lines.append(f"{name}'s acting style: {notes.strip().rstrip('.')}.")
+    if lines:
+        lines.append("Play it truthfully: motivated small gestures, eyes that think before they move, "
+                     "breathing that matches the emotion; no mugging or exaggerated poses.")
+    return " ".join(lines)
+
+
+def _pick_quality(field: dict, tier: str):
+    """Map a project quality tier onto the model's own resolution options."""
+    opts = field.get("enum") or []
+
+    def height(o):
+        if str(o).lower() in ("4k", "2160p"):
+            return 2160
+        m = re.search(r"(\d{3,4})", str(o))
+        return int(m.group(1)) if m else 0
+
+    ranked = sorted((o for o in opts if height(o)), key=height)
+    if not ranked:
+        return field.get("default")
+    if tier == "draft":
+        return ranked[0]
+    if tier == "max":
+        return ranked[-1]
+    want = 1080 if tier == "high" else 720
+    return min(ranked, key=lambda o: (abs(height(o) - want), -height(o)))
+
+
 def compile_request(shot: dict, scene: dict | None, plan: dict, project: dict, man: dict,
-                    refs: list[dict], overrides: dict | None = None, fix_notes: list[str] | None = None) -> dict:
-    """refs: [{'label': 'Sege, Amara, Young Sege — character sheet', 'url': ...}] already uploaded."""
+                    refs: list[dict], overrides: dict | None = None, fix_notes: list[str] | None = None,
+                    sung: dict | None = None) -> dict:
+    """Shot Contract -> this model's request.
+
+    refs: reference images already uploaded [{'label', 'url'}]. sung: optional lip-sync audio
+    {'url', 'lyrics', 'performer'} for shots where a character sings.
+    """
     roles, fields = man["roles"], {f["name"]: f for f in man["inputs"]}
     payload: dict = {}
     style = plan.get("meta", {}).get("VISUAL STYLE", "")
-    body = shot.get("visual_prompt") or " ".join(shot.get("beats", [])) or shot.get("description", "")
-    parts = [body]
-    if shot.get("performers"):
-        parts.append(f"Characters: {', '.join(shot['performers'])}.")
-    if shot.get("framing"):
-        parts.append(f"Shot: {shot['framing']}" + (f", {shot.get('camera_movement') or ', '.join(shot.get('camera_moves', []))}"
-                                                   if shot.get("camera_movement") or shot.get("camera_moves") else "") + ".")
-    if shot.get("lighting"):
-        parts.append(f"Lighting: {shot['lighting']}")
     look = resolve_look(project)  # the same look wording goes into every shot of the project
-    parts.append(f"Look: {look['prompt']}")
+    blocks: list[tuple[int, str]] = []  # (priority, text); lowest priority is dropped first if too long
+
+    body = shot.get("visual_prompt") or " ".join(shot.get("beats", [])) or shot.get("description", "")
+    blocks.append((10, body.strip()))
+    if shot.get("performers"):
+        blocks.append((9, f"Characters: {', '.join(shot['performers'])}."))
+    acting = acting_direction(shot, plan)
+    if acting:
+        blocks.append((8, acting))
+    cam = [shot.get("framing"), shot.get("lens"), shot.get("camera_movement") or ", ".join(shot.get("camera_moves", []))]
+    cam = [c for c in cam if c]
+    if cam:
+        energy = f"; {shot['camera_energy']} energy" if shot.get("camera_energy") else ""
+        blocks.append((7, "Camera: " + "; ".join(cam) + energy + "."))
+    if shot.get("environment"):
+        blocks.append((5, f"Setting: {shot['environment'].rstrip('.')}."))
+    if shot.get("lighting"):
+        blocks.append((6, f"Lighting: {shot['lighting'].rstrip('.')}."))
+    if shot.get("wardrobe"):
+        blocks.append((6, f"Wardrobe: {shot['wardrobe'].rstrip('.')}."))
+    blocks.append((9, f"Look: {look['prompt']}"))
     if style:
-        parts.append(f"Mood and colour: {style}")
+        blocks.append((3, f"Mood and colour: {style}"))
+
     image_refs = refs[: fields[roles["ref_images"]].get("max_items") or len(refs)] if "ref_images" in roles else []
     if image_refs:
         ordinal = ["first", "second", "third", "fourth", "fifth", "sixth"]
         tags = [f"{man['ref_syntax'].format(n=i + 1)} is the {r['label']}" if man.get("ref_syntax")
                 else f"the {ordinal[min(i, 5)]} reference image is the {r['label']}" for i, r in enumerate(image_refs)]
-        parts.append("References: " + "; ".join(tags) + ". Match the characters' faces, hair and wardrobe exactly.")
+        blocks.append((9, "References: " + "; ".join(tags) + ". Match the characters' faces, hair and wardrobe exactly."))
+
+    lip = bool(sung and "ref_audio" in roles and project.get("lip_sync", "auto") != "off")
+    if lip:
+        tag = "@Audio1" if man.get("ref_syntax") == "@Image{n}" else "the reference audio"
+        lyric = " / ".join(sung.get("lyrics", []))
+        blocks.append((9, f"{sung['performer']} sings along to {tag}: \"{lyric}\". Mouth shapes, breaths and phrasing "
+                          f"follow the vocal exactly; the performance is felt, not mimed."))
     if look["avoid"] and "negative_prompt" not in roles:
-        parts.append(f"Avoid: {look['avoid']}.")
+        blocks.append((4, f"Avoid: {look['avoid']}."))
     if fix_notes:
-        parts.append("Corrections from review: " + " ".join(n.rstrip(".") + "." for n in fix_notes))
-    parts.append("No on-screen text, no subtitles, no watermark. Performers do not lip-sync.")
-    payload[roles.get("prompt", "prompt")] = " ".join(p.strip() for p in parts if p)
+        blocks.append((10, "Corrections from review: " + " ".join(n.rstrip(".") + "." for n in fix_notes)))
+    blocks.append((9, "No on-screen text, no subtitles, no watermark." + ("" if lip else " Performers do not lip-sync.")))
+
+    limit = (fields.get(roles.get("prompt", "prompt")) or {}).get("max_length") or 0
+    keep = set(range(len(blocks)))
+    drop_order = sorted(range(len(blocks)), key=lambda i: blocks[i][0])
+
+    def text() -> str:
+        return " ".join(blocks[i][1] for i in sorted(keep))
+
+    while limit and len(text()) > limit and drop_order:
+        keep.discard(drop_order.pop(0))
+    payload[roles.get("prompt", "prompt")] = text()[:limit] if limit else text()
 
     if image_refs:
         f = fields[roles["ref_images"]]
@@ -278,17 +379,22 @@ def compile_request(shot: dict, scene: dict | None, plan: dict, project: dict, m
         payload[f["name"]] = urls if f["type"] == "array" else urls[0]
     elif refs and "first_frame" in roles:
         payload[roles["first_frame"]] = refs[0]["url"]
+    if lip:
+        f = fields[roles["ref_audio"]]
+        payload[f["name"]] = [sung["url"]] if f["type"] == "array" else sung["url"]
     if "duration" in roles:
         payload[roles["duration"]] = _duration_value(fields[roles["duration"]], shot["end"] - shot["start"])
     if "aspect_ratio" in roles:
         ar = project.get("aspect_ratio", "16:9")
         m = re.match(r"^([\d.]+):([\d.]+)$", ar)
-        pick = _nearest_aspect(fields[roles["aspect_ratio"]].get("enum"), float(m.group(1)) / float(m.group(2)) if m else 16 / 9)
+        ratio = float(m.group(1)) / float(m.group(2)) if m else 16 / 9
+        pick = _nearest_aspect(fields[roles["aspect_ratio"]].get("enum"), ratio)
         if pick:
             payload[roles["aspect_ratio"]] = pick
     if "resolution" in roles:
-        opts = fields[roles["resolution"]].get("enum") or []
-        payload[roles["resolution"]] = "720p" if "720p" in opts else fields[roles["resolution"]].get("default") or (opts[0] if opts else None)
+        payload[roles["resolution"]] = _pick_quality(fields[roles["resolution"]], project.get("quality", "standard"))
+    if project.get("quality") == "max" and "bitrate_mode" in fields and "high" in (fields["bitrate_mode"].get("enum") or []):
+        payload["bitrate_mode"] = "high"
     if look["avoid"] and "negative_prompt" in roles:
         payload[roles["negative_prompt"]] = f"{look['avoid']}, text, subtitles, watermark"
     if "audio" in roles:
@@ -521,6 +627,41 @@ def _uploaded(d: str, provider, files: list[dict]) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------- lip-sync audio
+
+SING_WORDS = re.compile(r"\b(sing|sings|singing|sung|vocal|lip|mouths?|chorus|verse|lyric)", re.I)
+
+
+def singing(d: str, shot: dict, plan: dict) -> dict | None:
+    """If a performer sings in this shot, the lyric lines under it and who sings them."""
+    song_map = _read(os.path.join(d, "songmap.json"), {}) or {}
+    lines = [l for l in song_map.get("lyrics", []) if l.get("start") is not None
+             and l["start"] < shot["end"] and (l.get("end") or l["start"]) > shot["start"]]
+    if not lines or not shot.get("performers"):
+        return None
+    text = " ".join(str(shot.get(k, "")) for k in ("visual_prompt", "performance", "movement", "description")) + " ".join(shot.get("beats", []))
+    if not SING_WORDS.search(text):
+        return None
+    lead = (plan.get("characters") or [{}])[0].get("name")
+    singer = lead if lead in shot["performers"] else shot["performers"][0]
+    return {"performer": singer, "lyrics": [l["text"] for l in lines]}
+
+
+def song_slice(d: str, shot: dict, seconds: float) -> str:
+    """The exact piece of the master song under this shot, as a small mp3 for audio-reference models."""
+    import subprocess
+    from .export import NO_WINDOW, ffmpeg
+    project = _read(os.path.join(d, "project.json"), {})
+    out_dir = os.path.join(d, "cache", "lipsync")
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, f"{shot['id']}_{shot['start']:.3f}_{seconds:.2f}.mp3")
+    if not os.path.exists(out):
+        subprocess.run([ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{shot['start']:.3f}", "-t", f"{seconds:.3f}",
+                        "-i", os.path.join(d, project.get("song", "song.wav")), "-ac", "2", "-b:a", "192k", out],
+                       check=True, creationflags=NO_WINDOW)
+    return out
+
+
 def enqueue(d: str, shot_ids: list[str], provider: str, model: str | None, overrides: dict | None,
             fix_notes: list[str] | None = None) -> list[dict]:
     project = _read(os.path.join(d, "project.json"), {})
@@ -607,7 +748,9 @@ def _submit(d: str, store: Store, project: dict, p, j: dict) -> None:
     man = manifest(j["provider"], j["model"])
     emit(event="progress", stage=f"preparing {j['shot_id']}")
     refs = _uploaded(d, p, _reference_files(d, project))
-    payload = compile_request(shot, scene, plan, project, man, refs, j.get("overrides"), j.get("fix_notes"))
+    sung = _sung_for(d, shot, plan, man, p)
+    payload = compile_request(shot, scene, plan, project, man, refs, j.get("overrides"), j.get("fix_notes"), sung)
+    payload = _resolve_project_media(d, p, payload)
     # Persist intent BEFORE the billable call; the id is persisted the moment it returns.
     try:
         est = estimate_payload(j["provider"], j["model"], man, payload)
@@ -617,6 +760,47 @@ def _submit(d: str, store: Store, project: dict, p, j: dict) -> None:
     emit(event="progress", stage=f"sending {j['shot_id']} to {j['provider']}")
     sub = p.submit(j["model"], payload)
     store.update(j, state="submitted", provider_job_id=sub.pop("id"), provider_meta=sub, submitted=int(time.time()))
+
+
+def _sung_for(d: str, shot: dict, plan: dict, man: dict, provider=None) -> dict | None:
+    """Lip-sync audio for singing shots on models that accept reference audio. provider=None: preview only."""
+    project = _read(os.path.join(d, "project.json"), {})
+    if "ref_audio" not in man["roles"] or project.get("lip_sync", "auto") == "off":
+        return None
+    sing = singing(d, shot, plan)
+    if not sing:
+        return None
+    fields = {f["name"]: f for f in man["inputs"]}
+    dur = shot["end"] - shot["start"]
+    if "duration" in man["roles"]:
+        try:
+            dur = float(str(_duration_value(fields[man["roles"]["duration"]], dur)).rstrip("s"))
+        except ValueError:
+            pass
+    local = song_slice(d, shot, dur)
+    url = f"(upload) {os.path.basename(local)}" if provider is None else _upload_cached(d, provider, local)
+    return {**sing, "url": url}
+
+
+def _upload_cached(d: str, provider, path: str) -> str:
+    return _uploaded(d, provider, [{"label": "", "path": path}])[0]["url"]
+
+
+PROJECT_MEDIA = "project:"
+
+
+def _resolve_project_media(d: str, provider, payload: dict) -> dict:
+    """Director Mode uploads are stored in the project as `project:<relative path>`; upload them now."""
+    def conv(v):
+        if isinstance(v, str) and v.startswith(PROJECT_MEDIA):
+            local = os.path.join(d, v[len(PROJECT_MEDIA):])
+            if not os.path.exists(local):
+                raise SystemExit(f"Reference file missing: {v[len(PROJECT_MEDIA):]}")
+            return _upload_cached(d, provider, local)
+        if isinstance(v, list):
+            return [conv(x) for x in v]
+        return v
+    return {k: conv(v) for k, v in payload.items()}
 
 
 def _check(d: str, store: Store, p, j: dict) -> None:
@@ -769,7 +953,9 @@ def preview(d: str, shot_id: str, provider: str, model: str | None, overrides: d
     shot, scene = _shot(plan, shot_id)
     man = manifest(provider, model or AUTO[provider])
     refs = [{"label": r["label"], "url": f"(upload) {os.path.basename(r['path'])}"} for r in _reference_files(d, project)]
-    return {"manifest": man, "payload": compile_request(shot, scene, plan, project, man, refs, overrides)}
+    sung = _sung_for(d, shot, plan, man)
+    return {"manifest": man, "payload": compile_request(shot, scene, plan, project, man, refs, overrides, None, sung),
+            "lip_sync": bool(sung), "singing": singing(d, shot, plan)}
 
 
 def main(argv: list[str]) -> int:

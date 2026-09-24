@@ -353,3 +353,19 @@ select.text-input { appearance: auto; }
 .cost.big .cost-n { color: var(--warning); }
 
 .toast.mini { min-width: 0; padding: 10px 18px; bottom: 40px; font-weight: 600; }
+
+/* ---------- deep director controls ---------- */
+.mi-group h5 { margin: 10px 0 6px; font-size: 11px; font-weight: 600; color: var(--smoke); letter-spacing: 0.1em; text-transform: uppercase; }
+.media-input { display: flex; flex-direction: column; gap: 6px; }
+.media-list { display: flex; flex-direction: column; gap: 4px; }
+.media-chip { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 7px; background: var(--graphite); font-size: 12px; }
+.media-chip img, .media-chip video { width: 38px; height: 26px; object-fit: cover; border-radius: 4px; }
+.media-ic { width: 26px; display: grid; place-items: center; color: var(--gold); }
+.media-tag { font-size: 10.5px; font-weight: 700; color: var(--signal-bright); }
+.media-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--mist); }
+.media-actions { display: flex; gap: 6px; align-items: center; }
+.media-actions .text-input { flex: 1; }
+.lip-note { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--gold); background: var(--gold-wash);
+  padding: 8px 10px; border-radius: 8px; margin-bottom: 10px; line-height: 1.45; }
+.settings-kv { align-items: center; }
+.settings-kv select { padding: 5px 8px; font-size: 12.5px; }

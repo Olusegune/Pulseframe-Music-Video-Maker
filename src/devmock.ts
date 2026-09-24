@@ -31,6 +31,8 @@ export async function installMock() {
       case "set_look": return null;
       case "app_ready": return null;
       case "launch_path": return null;
+      case "set_project_settings": return null;
+      case "import_reference": return { ref: "project:assets/refs/sege-closeup.png", kind: "image", name: "sege-closeup.png", path: "" };
       case "save_project": return { saved: Date.now() / 1000 };
       case "render_estimate": return { provider: "fal", model: preview.manifest.model, shots: 68, usd: 108.12, usd_known: 108.12, unknown: 0, basis: "≈113k tokens × $0.014/1,000 tokens" };
       case "export_project": return new Promise((r) => setTimeout(() => r({ path: "C:\Users\you\Documents\PULSEFRAME\Exit Plan.pulseframe\exports\Exit Plan - Cinema (draft).mp4", preset: "Cinema 2.39:1", width: 1920, height: 804, fps: 24, duration: 191.44, shots: 70, rendered: 2, draft: true }), 800));
