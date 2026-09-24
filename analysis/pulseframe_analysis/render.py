@@ -390,7 +390,9 @@ def compile_request(shot: dict, scene: dict | None, plan: dict, project: dict, m
 
     body = shot.get("visual_prompt") or " ".join(shot.get("beats", [])) or shot.get("description", "")
     if "duration" not in roles:  # an image model: this is the shot's first frame
-        body = "A single cinematic still, the first frame of this shot: " + body
+        # Image models weight the opening words most, so the look leads.
+        lead = look["prompt"].split(":")[0].rstrip(".")
+        body = f"{lead}. A single still, the first frame of this shot, in exactly that style: " + body
     blocks.append((10, body.strip()))
     if shot.get("performers"):
         blocks.append((9, f"Characters: {', '.join(shot['performers'])}."))
@@ -429,7 +431,10 @@ def compile_request(shot: dict, scene: dict | None, plan: dict, project: dict, m
         blocks.append((4, f"Avoid: {look['avoid']}."))
     if fix_notes:
         blocks.append((10, "Corrections from review: " + " ".join(n.rstrip(".") + "." for n in fix_notes)))
-    blocks.append((9, "No on-screen text, no subtitles, no watermark." + ("" if lip else " Performers do not lip-sync.")))
+    if "duration" not in roles:
+        blocks.append((9, "A clean, uncluttered cinematic frame with nothing written anywhere in the image."))
+    else:
+        blocks.append((9, "No on-screen text, no subtitles, no watermark." + ("" if lip else " Performers do not lip-sync.")))
 
     limit = (fields.get(roles.get("prompt", "prompt")) or {}).get("max_length") or 0
     keep = set(range(len(blocks)))
@@ -745,12 +750,19 @@ def _shot(plan: dict, shot_id: str) -> tuple[dict, dict]:
     raise SystemExit(f"Shot {shot_id} not found.")
 
 
-def _reference_files(d: str, project: dict) -> list[dict]:
+def _reference_files(d: str, project: dict, shot: dict | None = None) -> list[dict]:
+    """Reference images for a shot: a clean image per performer when the project has them (so only the
+    people in the shot are sent, without sheet text to copy), else the whole character sheet; then the set sheet."""
     refs = project.get("references") or {}
     out = []
-    if refs.get("characters") and os.path.exists(os.path.join(d, refs["characters"])):
-        out.append({"label": "character sheet (Sege, Amara, Young Sege: faces, turnarounds, outfits)",
-                    "path": os.path.join(d, refs["characters"])})
+    cast = refs.get("cast") or {}
+    people = (shot or {}).get("performers") or []
+    picked = [n for n in people if cast.get(n) and os.path.exists(os.path.join(d, cast[n]))]
+    if picked:
+        for n in picked:
+            out.append({"label": f"reference for {n} (face, expressions, full-body turnaround)", "path": os.path.join(d, cast[n])})
+    elif refs.get("characters") and os.path.exists(os.path.join(d, refs["characters"])):
+        out.append({"label": "character sheet (faces, turnarounds, outfits)", "path": os.path.join(d, refs["characters"])})
     if refs.get("sets") and os.path.exists(os.path.join(d, refs["sets"])):
         out.append({"label": "set and props sheet (locations, props, colour palette)", "path": os.path.join(d, refs["sets"])})
     return out
@@ -942,7 +954,10 @@ def _submit(d: str, store: Store, project: dict, p, j: dict) -> None:
     shot, scene = _shot(plan, j["shot_id"])
     man = manifest(j["provider"], j["model"])
     emit(event="progress", stage=f"preparing {j['shot_id']}")
-    refs = [] if j.get("kind") == "lipsync" else _uploaded(d, p, _reference_files(d, project))
+    ref_files = _reference_files(d, project, shot)
+    if j.get("kind") == "image":
+        ref_files = [r for r in ref_files if not r["label"].startswith("set and props")]
+    refs = [] if j.get("kind") == "lipsync" else _uploaded(d, p, ref_files)
     if j.get("kind") == "lipsync":
         src = next((x for x in store.jobs if x["id"] == j.get("source_job")), None)
         if not src or not src.get("output"):
@@ -1120,6 +1135,8 @@ def estimate_payload(provider: str, model: str, man: dict, payload: dict) -> dic
     unit, unit_price = price.get("unit", ""), float(price.get("unit_price", 0))
     if "second" in unit:
         return {"usd": round(unit_price * secs, 3), "basis": f"${unit_price}/s × {secs:g}s"}
+    if "minute" in unit:
+        return {"usd": round(unit_price * secs / 60, 3), "basis": f"${unit_price}/min × {secs:g}s"}
     if "token" in unit:
         # ByteDance video tokens ≈ width × height × fps × seconds / 1024.
         h = RES_HEIGHT.get(str(payload.get(roles.get("resolution", "resolution"), "720p")).lower(), 720)
@@ -1139,7 +1156,7 @@ def estimate(d: str, shot_ids: list[str], provider: str, model: str | None, kind
     _, plan = _load_plan(d)
     man = manifest(provider, model or (AUTO_IMAGE if kind == "image" else AUTO)[provider])
     total, per, unknown = 0.0, [], 0
-    refs = [{"label": r["label"], "url": "x"} for r in _reference_files(d, project)]
+    refs = [{"label": r["label"], "url": "x"} for r in _reference_files(d, project, None)]
     for sid in shot_ids:
         shot, scene = _shot(plan, sid)
         e = estimate_payload(provider, man["model"], man, compile_request(shot, scene, plan, project, man, refs))
@@ -1181,7 +1198,8 @@ def preview(d: str, shot_id: str, provider: str, model: str | None, overrides: d
     _, plan = _load_plan(d)
     shot, scene = _shot(plan, shot_id)
     man = manifest(provider, model or (AUTO_IMAGE if kind == "image" else AUTO)[provider])
-    refs = [{"label": r["label"], "url": f"(upload) {os.path.basename(r['path'])}"} for r in _reference_files(d, project)]
+    refs = [{"label": r["label"], "url": f"(upload) {os.path.basename(r['path'])}"} for r in _reference_files(d, project, shot)
+            if kind != "image" or not r["label"].startswith("set and props")]
     plan_name = "directed" if os.path.exists(os.path.join(d, "directed.json")) else "production"
     kf = approved_keyframe(d, plan_name, shot_id) if kind == "video" else None
     refs = _with_keyframe(refs, kf)
