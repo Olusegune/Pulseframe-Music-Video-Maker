@@ -64,7 +64,7 @@ jobs:
       - name: Imports
         working-directory: analysis
         run: python -c "import librosa, demucs, faster_whisper, openai, fal_client, pypdf, imageio_ffmpeg, PIL, yaml, keyring, pulseframe_analysis.render, pulseframe_analysis.concepts, pulseframe_analysis.command; print('imports ok')"
-      - name: Analyse a generated test song (known answer: 120 BPM, 6 sections)
+      - name: "Analyse a generated test song (known answer: 120 BPM, 6 sections)"
         working-directory: analysis
         shell: bash
         run: |
