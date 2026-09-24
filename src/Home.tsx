@@ -6,8 +6,8 @@ import { Gear, Mark, Note } from "./icons";
 
 const AUDIO = ["mp3", "wav", "m4a"];
 
-export function Home({ onSong, onOpen, onChooseProject, onSettings }: {
-  onSong: (path: string) => void; onOpen: (dir: string) => void; onChooseProject: () => void; onSettings: () => void;
+export function Home({ onSong, onOpen, onChooseProject, onSettings, onHelp }: {
+  onSong: (path: string) => void; onOpen: (dir: string) => void; onChooseProject: () => void; onSettings: () => void; onHelp: () => void;
 }) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [over, setOver] = useState(false);
@@ -41,7 +41,10 @@ export function Home({ onSong, onOpen, onChooseProject, onSettings }: {
     <div className="home">
       <div className="home-top">
         <div className="wordmark"><Mark size={24} /> PULSEFRAME</div>
-        <button className="icon-btn" onClick={onSettings} title="Settings" aria-label="Settings"><Gear /></button>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <button className="btn ghost" onClick={onHelp}>Getting started</button>
+          <button className="icon-btn" onClick={onSettings} title="Settings" aria-label="Settings"><Gear /></button>
+        </div>
       </div>
 
       <div className="home-hero">

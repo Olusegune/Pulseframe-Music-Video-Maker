@@ -755,7 +755,10 @@ pub fn run() {
                 .item(&item("mode_director", "Director Mode", Some("CmdOrCtrl+2"))?)
                 .item(&item("inspector", "Toggle Inspector", Some("CmdOrCtrl+I"))?)
                 .build()?;
-            MenuBuilder::new(app).item(&file).item(&view).build()
+            let help = SubmenuBuilder::new(app, "Help")
+                .item(&item("help", "Getting Started", Some("F1"))?)
+                .build()?;
+            MenuBuilder::new(app).item(&file).item(&view).item(&help).build()
         })
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());

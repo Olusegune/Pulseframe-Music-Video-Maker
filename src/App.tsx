@@ -7,6 +7,7 @@ import { NewProject } from "./NewProject";
 import { Analysis } from "./Analysis";
 import { Studio } from "./Studio";
 import { Settings } from "./Settings";
+import { HelpSheet } from "./Help";
 import "./styles.css";
 
 type View =
@@ -20,6 +21,7 @@ export default function App() {
   const [settings, setSettings] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [help, setHelp] = useState(false);
   const say = useCallback((t: string) => { setToast(t); setTimeout(() => setToast(""), 1800); }, []);
 
   // First paint is done: swap the splash window for this one.
@@ -60,6 +62,7 @@ export default function App() {
           }
           case "open": await chooseProject(); break;
           case "settings": setSettings(true); break;
+          case "help": setHelp(true); break;
           case "save":
             if (current) { await api.saveProject(current.dir); say("Saved"); } else say("Open a project to save it.");
             break;
@@ -81,7 +84,7 @@ export default function App() {
 
   return (
     <>
-      {view.name === "home" && <Home onSong={setNewSong} onOpen={openProject} onChooseProject={chooseProject} onSettings={() => setSettings(true)} />}
+      {view.name === "home" && <Home onSong={setNewSong} onOpen={openProject} onChooseProject={chooseProject} onSettings={() => setSettings(true)} onHelp={() => setHelp(true)} />}
       {toast && <div className="toast glass mini" role="status">{toast}</div>}
       {view.name === "analysis" && <Analysis dir={view.dir} title={view.title}
                                              onDone={() => openProject(view.dir)} onBack={() => setView({ name: "home" })} />}
@@ -90,6 +93,7 @@ export default function App() {
       {newSong && <NewProject songPath={newSong} onCancel={() => setNewSong(null)}
                               onCreated={(dir) => { setNewSong(null); setView({ name: "analysis", dir, title: "" }); }} />}
       {settings && <Settings onClose={() => setSettings(false)} />}
+      {help && <HelpSheet onClose={() => setHelp(false)} />}
       {error && <div className="toast glass" role="alert"><div className="t" style={{ color: "var(--error)" }}>Could not open</div>
         <div className="s">{error}</div><div style={{ textAlign: "right", marginTop: 10 }}><button className="btn" onClick={() => setError("")}>OK</button></div></div>}
     </>

@@ -397,3 +397,17 @@ select.text-input { appearance: auto; }
 .dir-look { font-size: 12px; color: var(--smoke); }
 .dir-foot { display: flex; gap: 12px; align-items: center; margin-top: 18px; }
 .dir-foot .text-input { flex: 1; }
+
+/* ---------- help ---------- */
+.help-sheet { width: min(820px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+.guide { user-select: text; font-size: 14.5px; line-height: 1.65; color: var(--mist); padding: 0 8px 12px; }
+.guide h1 { font: 600 30px var(--font-display); color: var(--frost); margin: 0 0 12px; }
+.guide h2 { font: 600 20px var(--font-display); color: var(--frost); margin: 26px 0 8px; }
+.guide h3 { font-size: 15px; color: var(--frost); margin: 18px 0 6px; }
+.guide b { color: var(--frost); }
+.guide code { font-family: ui-monospace, "Cascadia Mono", monospace; font-size: 12.5px; background: var(--slate); padding: 1px 6px; border-radius: 5px; color: var(--frost); }
+.guide hr { border: none; border-top: 1px solid var(--line); margin: 22px 0; }
+.guide table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13.5px; }
+.guide th, .guide td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.guide th { color: var(--frost); font-weight: 600; }
+.guide li { margin-bottom: 5px; }
