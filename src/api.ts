@@ -41,10 +41,11 @@ export type LoadedProject = {
   directed: Plan | null;
   jobs: Job[];
   doc?: string | null;
+  keyframes?: Record<string, Record<string, string>>;
 };
 export type JobState = "queued" | "submitting" | "submitted" | "ready" | "failed" | "uncertain" | "dismissed";
 export type Job = {
-  id: string; shot_id: string; plan: string; provider: "fal" | "kie"; model: string; state: JobState;
+  id: string; shot_id: string; plan: string; provider: "fal" | "kie" | "google"; model: string; state: JobState; kind?: "video" | "image";
   overrides: Record<string, unknown>; payload?: Record<string, unknown>; provider_job_id: string | null;
   output: string | null; error: string | null; cost: number | null; cost_unit?: string | null;
   created: number; updated: number; attempts: number; shot_start: number; shot_end: number; look?: string;
@@ -70,6 +71,12 @@ export type CatalogItem = { provider: string; model: string; title: string; cate
 export const AUTO_MODEL: Record<string, string> = {
   fal: "bytedance/seedance-2.0/reference-to-video",
   kie: "bytedance/seedance-2",
+  google: "veo-3.1-fast-generate-preview",
+};
+export const AUTO_IMAGE_MODEL: Record<string, string> = {
+  fal: "fal-ai/nano-banana/edit",
+  kie: "google/nano-banana-edit",
+  google: "gemini-3.1-flash-image",
 };
 
 export type Style = { id: string; name: string; group: string; description: string; prompt: string; avoid: string; fit?: string };
@@ -80,7 +87,7 @@ export type ExportResult = {
   shots: number; rendered: number; draft: boolean;
 };
 
-export type KeyStatus = { openai: boolean; fal: boolean; kie: boolean };
+export type KeyStatus = { openai: boolean; fal: boolean; kie: boolean; google: boolean };
 export type EngineEvent = { task: string; event: string; job?: unknown; stage?: string; progress?: number; message?: string; [k: string]: unknown };
 
 export const api = {
@@ -106,15 +113,17 @@ export const api = {
   analyzeProject: (dir: string) => invoke<void>("analyze_project", { dir }),
   directProject: (dir: string) => invoke<void>("direct_project", { dir }),
   ensureRenderer: (dir: string) => invoke<void>("ensure_renderer", { dir }),
-  renderCatalog: (provider: string) => invoke<CatalogItem[]>("render_catalog", { provider }),
+  renderCatalog: (provider: string, kind: "video" | "image" | "lipsync" = "video") => invoke<CatalogItem[]>("render_catalog", { provider, kind }),
+  setKeyframe: (dir: string, plan: string, shot: string, image: string | null) => invoke<void>("set_keyframe", { dir, plan, shot, image }),
   modelManifest: (provider: string, model: string) => invoke<Manifest>("model_manifest", { provider, model }),
-  renderPreview: (dir: string, shot: string, provider: string, model: string | null, overrides: Record<string, unknown>) =>
-    invoke<{ manifest: Manifest; payload: Record<string, unknown>; lip_sync?: boolean; singing?: { performer: string; lyrics: string[] } | null }>("render_preview", { dir, shot, provider, model, overrides }),
+  renderPreview: (dir: string, shot: string, provider: string, model: string | null, overrides: Record<string, unknown>,
+                  kind: "video" | "image" = "video") =>
+    invoke<{ manifest: Manifest; payload: Record<string, unknown>; lip_sync?: boolean; singing?: { performer: string; lyrics: string[] } | null }>("render_preview", { dir, shot, provider, model, overrides, kind }),
   queueRender: (dir: string, shots: string[], provider: string, model: string | null, overrides: Record<string, unknown>,
-                fixNotes: string[] = []) =>
-    invoke<Job[]>("queue_render", { dir, shots, provider, model, overrides, fixNotes }),
-  renderEstimate: (dir: string, shots: string[], provider: string, model: string | null) =>
-    invoke<Estimate>("render_estimate", { dir, shots, provider, model }),
+                fixNotes: string[] = [], kind: "video" | "image" = "video") =>
+    invoke<Job[]>("queue_render", { dir, shots, provider, model, overrides, fixNotes, kind }),
+  renderEstimate: (dir: string, shots: string[], provider: string, model: string | null, kind: "video" | "image" = "video") =>
+    invoke<Estimate>("render_estimate", { dir, shots, provider, model, kind }),
   resolveJob: (dir: string, job: string, action: "retry" | "dismiss" | "accept") => invoke<Job>("resolve_job", { dir, job, action }),
   onRenderIdle: (fn: (e: { dir: string; error: string | null }) => void): Promise<UnlistenFn> =>
     listen<{ dir: string; error: string | null }>("render-idle", (e) => fn(e.payload)),

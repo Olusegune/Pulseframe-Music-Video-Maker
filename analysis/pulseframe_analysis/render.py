@@ -33,6 +33,13 @@ ACTIVE = ("queued", "submitting", "submitted")
 AUTO = {
     "fal": "bytedance/seedance-2.0/reference-to-video",
     "kie": "bytedance/seedance-2",
+    "google": "veo-3.1-fast-generate-preview",
+}
+# Keyframes: a still for each shot, made with reference images, then animated (better consistency, cheaper retries).
+AUTO_IMAGE = {
+    "fal": "fal-ai/nano-banana/edit",
+    "kie": "google/nano-banana-edit",
+    "google": "gemini-3.1-flash-image",
 }
 
 
@@ -145,7 +152,49 @@ def kie_manifest(model: str, doc: str | None = None) -> dict:
     return _finish("kie", model_id, title, "", fields)
 
 
+def _g(name, typ, desc, enum=None, default=None, items=None, max_items=None, required=False):
+    return {"name": name, "type": typ, "items": items, "enum": enum, "default": default, "minimum": None, "maximum": None,
+            "max_items": max_items, "max_length": None, "description": desc, "required": required}
+
+
+def google_manifest(model: str) -> dict:
+    """Gemini API models (per ai.google.dev docs, Sept 2026). Media is sent inline, so refs are local files."""
+    if model.startswith("veo-"):
+        lite = "lite" in model
+        fields = [
+            _g("prompt", "string", "What happens in the video. Veo also follows sound cues in quotes; PULSEFRAME mutes model audio.", required=True),
+            _g("negative_prompt", "string", "What to avoid."),
+            _g("image_url", "string", "First frame image (image-to-video)."),
+            _g("last_frame_url", "string", "Last frame image; Veo interpolates between first and last frame."),
+            _g("reference_image_urls", "array", "Up to 3 asset reference images for characters, objects or style.", items="string", max_items=3),
+            _g("aspect_ratio", "string", "Frame shape.", enum=["16:9", "9:16"], default="16:9"),
+            _g("resolution", "string", "Output resolution.", enum=["720p", "1080p"] + ([] if lite else ["4k"]), default="720p"),
+            _g("duration", "string", "Length in seconds.", enum=["4", "6", "8"], default="8"),
+            _g("person_generation", "string", "People in the video.", enum=["allow_adult", "allow_all"], default="allow_adult"),
+            _g("seed", "integer", "Fix for repeatable results."),
+        ]
+        title = {"veo-3.1-generate-preview": "Veo 3.1", "veo-3.1-fast-generate-preview": "Veo 3.1 Fast",
+                 "veo-3.1-lite-generate-preview": "Veo 3.1 Lite"}.get(model, model)
+        return _finish("google", model, title, "video", fields)
+    fields = [
+        _g("prompt", "string", "What the image shows.", required=True),
+        _g("image_urls", "array", "Reference images (characters, style, the previous shot).", items="string", max_items=14),
+        _g("aspect_ratio", "string", "Frame shape.", enum=["1:1", "3:2", "2:3", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"], default="16:9"),
+        _g("image_size", "string", "Output size.", enum=(["1K"] if "lite" in model else ["1K", "2K", "4K"]), default="1K"),
+    ]
+    title = {"gemini-3.1-flash-image": "Nano Banana (Gemini 3.1 Flash Image)", "gemini-3-pro-image": "Nano Banana Pro (Gemini 3 Pro Image)",
+             "gemini-3.1-flash-lite-image": "Gemini 3.1 Flash Lite Image"}.get(model, model)
+    return _finish("google", model, title, "image", fields)
+
+
+GOOGLE_MODELS = [
+    ("veo-3.1-generate-preview", "video"), ("veo-3.1-fast-generate-preview", "video"), ("veo-3.1-lite-generate-preview", "video"),
+    ("gemini-3.1-flash-image", "image"), ("gemini-3-pro-image", "image"), ("gemini-3.1-flash-lite-image", "image"),
+]
+
 def manifest(provider: str, model: str, refresh: bool = False) -> dict:
+    if provider == "google":
+        return google_manifest(model)
     os.makedirs(CACHE_DIR, exist_ok=True)
     path = os.path.join(CACHE_DIR, f"{provider}__{re.sub(r'[^A-Za-z0-9._-]+', '_', model)}.json")
     if not refresh and os.path.exists(path) and time.time() - os.path.getmtime(path) < 7 * 86400:
@@ -157,11 +206,19 @@ def manifest(provider: str, model: str, refresh: bool = False) -> dict:
     return m
 
 
-def catalog(provider: str) -> list[dict]:
-    """Video models a user can pick in Director Mode."""
+FAL_CATEGORIES = {"video": ("image-to-video", "text-to-video", "video-to-video"),
+                  "image": ("text-to-image", "image-to-image"),
+                  "lipsync": ("video-to-video", "audio-to-video")}
+
+
+def catalog(provider: str, kind: str = "video") -> list[dict]:
+    """Models a user can pick in Director Mode (kind: video | image | lipsync)."""
+    if provider == "google":
+        return [{"provider": "google", "model": m, "category": k, "title": google_manifest(m)["title"]}
+                for m, k in GOOGLE_MODELS if k == kind]
     if provider == "fal":
         out, seen = [], set()
-        for cat in ("image-to-video", "text-to-video", "video-to-video"):
+        for cat in FAL_CATEGORIES.get(kind, FAL_CATEGORIES["video"]):
             cursor = None
             for _ in range(10):
                 params = {"category": cat, "limit": 100, "status": "active"}
@@ -176,9 +233,12 @@ def catalog(provider: str) -> list[dict]:
                 cursor = r.get("next_cursor")
                 if not r.get("has_more") or not cursor:
                     break
+        if kind == "lipsync":
+            out = [m for m in out if re.search(r"lip.?sync|sync-|talking|avatar", m["model"] + m["title"], re.I)]
         return out
     return [{"provider": "kie", "model": _slug_from_doc(e["doc"]), "category": e["kind"], "title": f"{e['family']} · {e['title']}",
-             "doc": e["doc"]} for e in _kie_index() if e["kind"] == "video"]
+             "doc": e["doc"]} for e in _kie_index()
+            if (e["kind"] == kind) or (kind == "lipsync" and re.search(r"lip.?sync|avatar|infinitalk", e["doc"] + e["title"], re.I))]
 
 
 def _slug_from_doc(doc: str) -> str:
@@ -322,6 +382,8 @@ def compile_request(shot: dict, scene: dict | None, plan: dict, project: dict, m
     blocks: list[tuple[int, str]] = []  # (priority, text); lowest priority is dropped first if too long
 
     body = shot.get("visual_prompt") or " ".join(shot.get("beats", [])) or shot.get("description", "")
+    if "duration" not in roles:  # an image model: this is the shot's first frame
+        body = "A single cinematic still, the first frame of this shot: " + body
     blocks.append((10, body.strip()))
     if shot.get("performers"):
         blocks.append((9, f"Characters: {', '.join(shot['performers'])}."))
@@ -373,11 +435,15 @@ def compile_request(shot: dict, scene: dict | None, plan: dict, project: dict, m
         keep.discard(drop_order.pop(0))
     payload[roles.get("prompt", "prompt")] = text()[:limit] if limit else text()
 
+    keyframe = next((r["url"] for r in refs if r.get("keyframe")), None)
+    if keyframe and "first_frame" in roles:
+        payload[roles["first_frame"]] = keyframe
+        image_refs = [r for r in image_refs if not r.get("keyframe")]
     if image_refs:
         f = fields[roles["ref_images"]]
         urls = [r["url"] for r in image_refs]
         payload[f["name"]] = urls if f["type"] == "array" else urls[0]
-    elif refs and "first_frame" in roles:
+    elif refs and "first_frame" in roles and "first_frame" not in [k for k in roles if roles[k] in payload]:
         payload[roles["first_frame"]] = refs[0]["url"]
     if lip:
         f = fields[roles["ref_audio"]]
@@ -495,7 +561,84 @@ class Kie:
         return {"state": "running", "detail": st or "waiting", "progress": d.get("progress")}
 
 
-PROVIDERS = {"fal": Fal, "kie": Kie}
+class Google:
+    """Gemini API: Veo (long-running) and Gemini image models (synchronous). Media goes inline as base64."""
+    name = "google"
+    base = "https://generativelanguage.googleapis.com/v1beta"
+
+    def __init__(self):
+        self.key = os.environ.get("GEMINI_API_KEY")
+        if not self.key:
+            raise SystemExit("Add your Google Gemini API key in Settings to render with Google.")
+        self.h = {**UA, "x-goog-api-key": self.key, "Content-Type": "application/json"}
+
+    def upload(self, path: str) -> str:
+        # No upload service for these endpoints: keep a local reference and inline it at submit time.
+        return "file:" + os.path.abspath(path)
+
+    @staticmethod
+    def _inline(ref: str) -> dict:
+        path = ref[5:] if ref.startswith("file:") else ref
+        mime = mimetypes.guess_type(path)[0] or "image/png"
+        with open(path, "rb") as f:
+            return {"mimeType": mime, "data": base64.b64encode(f.read()).decode()}
+
+    def submit(self, model: str, payload: dict) -> dict:
+        if model.startswith("veo-"):
+            inst: dict = {"prompt": payload.get("prompt", "")}
+            if payload.get("image_url"):
+                inst["image"] = {"inlineData": self._inline(payload["image_url"])}
+            if payload.get("last_frame_url"):
+                inst["lastFrame"] = {"inlineData": self._inline(payload["last_frame_url"])}
+            if payload.get("reference_image_urls"):
+                inst["referenceImages"] = [{"image": {"inlineData": self._inline(u)}, "referenceType": "asset"}
+                                           for u in payload["reference_image_urls"][:3]]
+            params = {k2: payload[k1] for k1, k2 in (("aspect_ratio", "aspectRatio"), ("resolution", "resolution"),
+                                                      ("duration", "durationSeconds"), ("negative_prompt", "negativePrompt"),
+                                                      ("person_generation", "personGeneration"), ("seed", "seed")) if payload.get(k1) not in (None, "")}
+            r = requests.post(f"{self.base}/models/{model}:predictLongRunning", json={"instances": [inst], "parameters": params},
+                              headers=self.h, timeout=120)
+            _raise(r)
+            return {"id": r.json()["name"]}
+        # Image models answer immediately; keep the bytes until the runner downloads them.
+        inputs = [{"type": "text", "text": payload.get("prompt", "")}]
+        for u in payload.get("image_urls") or []:
+            d = self._inline(u)
+            inputs.append({"type": "image", "mime_type": d["mimeType"], "data": d["data"]})
+        body = {"model": model, "input": inputs, "response_format": {"type": "image", "mime_type": "image/png",
+                **({"aspect_ratio": payload["aspect_ratio"]} if payload.get("aspect_ratio") else {}),
+                **({"image_size": payload["image_size"]} if payload.get("image_size") else {})}}
+        r = requests.post(f"{self.base}/interactions", json=body, headers=self.h, timeout=300)
+        _raise(r)
+        j = r.json()
+        it = j.get("interaction", j)
+        data = (it.get("output_image") or {}).get("data") or next(
+            (c.get("data") for st in it.get("steps", []) for c in st.get("content", []) if c.get("type") == "image" and c.get("data")), None)
+        if not data:
+            raise ProviderError("Google returned no image (it may have been blocked by safety filters).", 422)
+        tmp = os.path.join(os.path.expanduser("~"), ".pulseframe", "incoming")
+        os.makedirs(tmp, exist_ok=True)
+        path = os.path.join(tmp, f"{uuid.uuid4().hex}.png")
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(data))
+        return {"id": "inline-" + os.path.basename(path), "file": path}
+
+    def poll(self, model: str, rid: str, meta: dict | None = None) -> dict:
+        if rid.startswith("inline-"):
+            return {"state": "done", "url": "file:" + (meta or {}).get("file", "")}
+        r = requests.get(f"{self.base}/{rid}", headers=self.h, timeout=30)
+        _raise(r)
+        op = r.json()
+        if not op.get("done"):
+            return {"state": "running", "detail": "generating"}
+        if op.get("error"):
+            return {"state": "failed", "error": op["error"].get("message", "Generation failed.")}
+        samples = ((op.get("response") or {}).get("generateVideoResponse") or {}).get("generatedSamples") or []
+        uri = samples[0]["video"]["uri"] if samples else None
+        return {"state": "done", "url": uri, "auth": True} if uri else {"state": "failed", "error": "No video returned (possibly blocked by safety filters)."}
+
+
+PROVIDERS = {"fal": Fal, "kie": Kie, "google": Google}
 
 
 class ProviderError(RuntimeError):
@@ -663,21 +806,22 @@ def song_slice(d: str, shot: dict, seconds: float) -> str:
 
 
 def enqueue(d: str, shot_ids: list[str], provider: str, model: str | None, overrides: dict | None,
-            fix_notes: list[str] | None = None) -> list[dict]:
+            fix_notes: list[str] | None = None, kind: str = "video") -> list[dict]:
     project = _read(os.path.join(d, "project.json"), {})
     plan_name, plan = _load_plan(d)
-    model = model or AUTO[provider]
+    model = model or (AUTO_IMAGE if kind == "image" else AUTO)[provider]
     man = manifest(provider, model)
     store = Store(d)
     made = []
     for sid in shot_ids:
         if any(j["shot_id"] == sid and j["plan"] == plan_name and j["provider"] == provider and j["model"] == man["model"]
+               and j.get("kind", "video") == kind
                and j["state"] in ACTIVE for j in store.jobs):
             continue  # never double-queue the same shot on the same model (side-by-side comparisons are fine)
         shot, scene = _shot(plan, sid)
         job = {"id": uuid.uuid4().hex[:12], "shot_id": sid, "plan": plan_name, "source_shots": shot.get("source_shots", []),
                "shot_start": shot["start"], "shot_end": shot["end"], "provider": provider, "model": man["model"],
-               "overrides": overrides or {}, "fix_notes": fix_notes or [], "look": resolve_look(project)["id"], "state": "queued", "provider_job_id": None, "attempts": 0,
+               "kind": kind, "overrides": overrides or {}, "fix_notes": fix_notes or [], "look": resolve_look(project)["id"], "state": "queued", "provider_job_id": None, "attempts": 0,
                "created": int(time.time()), "updated": int(time.time()), "output": None, "error": None, "cost": None}
         store.jobs.append(job)
         made.append(job)
@@ -748,7 +892,9 @@ def _submit(d: str, store: Store, project: dict, p, j: dict) -> None:
     man = manifest(j["provider"], j["model"])
     emit(event="progress", stage=f"preparing {j['shot_id']}")
     refs = _uploaded(d, p, _reference_files(d, project))
-    sung = _sung_for(d, shot, plan, man, p)
+    sung = _sung_for(d, shot, plan, man, p) if j.get("kind", "video") == "video" else None
+    if j.get("kind", "video") == "video":
+        refs = _with_keyframe(refs, approved_keyframe(d, j["plan"], j["shot_id"]))
     payload = compile_request(shot, scene, plan, project, man, refs, j.get("overrides"), j.get("fix_notes"), sung)
     payload = _resolve_project_media(d, p, payload)
     # Persist intent BEFORE the billable call; the id is persisted the moment it returns.
@@ -760,6 +906,20 @@ def _submit(d: str, store: Store, project: dict, p, j: dict) -> None:
     emit(event="progress", stage=f"sending {j['shot_id']} to {j['provider']}")
     sub = p.submit(j["model"], payload)
     store.update(j, state="submitted", provider_job_id=sub.pop("id"), provider_meta=sub, submitted=int(time.time()))
+
+
+def approved_keyframe(d: str, plan_name: str, shot_id: str) -> str | None:
+    """The keyframe the user approved for this shot (a `project:` image), if any."""
+    kf = _read(os.path.join(d, "keyframes.json"), {}) or {}
+    ref = (kf.get(plan_name) or {}).get(shot_id)
+    return ref if ref and os.path.exists(os.path.join(d, ref[len(PROJECT_MEDIA):])) else None
+
+
+def _with_keyframe(refs: list[dict], kf: str | None) -> list[dict]:
+    if not kf:
+        return refs
+    return [{"label": "approved keyframe for this exact shot: start from this frame and keep its composition, "
+                      "characters, wardrobe and lighting", "url": kf, "keyframe": True}] + refs
 
 
 def _sung_for(d: str, shot: dict, plan: dict, man: dict, provider=None) -> dict | None:
@@ -813,17 +973,27 @@ def _check(d: str, store: Store, p, j: dict) -> None:
         return
     out_dir = os.path.join(d, "generations")
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, f"{j['shot_id']}__{j['id']}.mp4")
+    url = res["url"] or ""
+    ext = ".mp4" if j.get("kind", "video") != "image" else (os.path.splitext(url.split("?")[0])[1].lower() or ".png")
+    if ext not in (".mp4", ".mov", ".webm", ".png", ".jpg", ".jpeg", ".webp"):
+        ext = ".png" if j.get("kind") == "image" else ".mp4"
+    out = os.path.join(out_dir, f"{j['shot_id']}__{j['id']}{ext}")
     emit(event="progress", stage=f"downloading {j['shot_id']}")
-    with requests.get(res["url"], stream=True, timeout=300) as r:
-        r.raise_for_status()
-        with open(out + ".part", "wb") as f:
-            for chunk in r.iter_content(1 << 20):
-                f.write(chunk)
-    os.replace(out + ".part", out)
+    if url.startswith("file:"):
+        import shutil
+        shutil.move(url[5:], out)
+    else:
+        headers = getattr(p, "h", {}) if res.get("auth") else {}
+        with requests.get(url, stream=True, timeout=300, headers=headers) as r:
+            r.raise_for_status()
+            with open(out + ".part", "wb") as f:
+                for chunk in r.iter_content(1 << 20):
+                    f.write(chunk)
+        os.replace(out + ".part", out)
     store.update(j, state="ready", output=os.path.relpath(out, d).replace(os.sep, "/"), output_url=res["url"],
                  cost=res.get("cost"), cost_unit=res.get("cost_unit"), finished=int(time.time()))
-    _review(d, store, j)
+    if j.get("kind", "video") == "video":
+        _review(d, store, j)
 
 
 def _review(d: str, store: Store, j: dict) -> None:
@@ -881,6 +1051,8 @@ def _fal_price(model: str) -> dict | None:
 
 def estimate_payload(provider: str, model: str, man: dict, payload: dict) -> dict:
     """Best-effort USD estimate for one request. Returns {'usd': float|None, 'basis': str}."""
+    if provider == "google":
+        return {"usd": None, "basis": "Google bills per second of video / per image; see your Google AI Studio usage."}
     if provider != "fal":
         return {"usd": None, "basis": "Kie bills in credits; the exact amount is shown after each render."}
     price = _fal_price(model)
@@ -905,10 +1077,10 @@ def estimate_payload(provider: str, model: str, man: dict, payload: dict) -> dic
     return {"usd": None, "basis": f"Billed per {unit}."}
 
 
-def estimate(d: str, shot_ids: list[str], provider: str, model: str | None) -> dict:
+def estimate(d: str, shot_ids: list[str], provider: str, model: str | None, kind: str = "video") -> dict:
     project = _read(os.path.join(d, "project.json"), {})
     _, plan = _load_plan(d)
-    man = manifest(provider, model or AUTO[provider])
+    man = manifest(provider, model or (AUTO_IMAGE if kind == "image" else AUTO)[provider])
     total, per, unknown = 0.0, [], 0
     refs = [{"label": r["label"], "url": "x"} for r in _reference_files(d, project)]
     for sid in shot_ids:
@@ -946,48 +1118,53 @@ def resolve(d: str, job_id: str, action: str) -> dict:
     return j
 
 
-def preview(d: str, shot_id: str, provider: str, model: str | None, overrides: dict | None) -> dict:
+def preview(d: str, shot_id: str, provider: str, model: str | None, overrides: dict | None, kind: str = "video") -> dict:
     """Show exactly what would be sent (reference URLs shown as local files). Costs nothing."""
     project = _read(os.path.join(d, "project.json"), {})
     _, plan = _load_plan(d)
     shot, scene = _shot(plan, shot_id)
-    man = manifest(provider, model or AUTO[provider])
+    man = manifest(provider, model or (AUTO_IMAGE if kind == "image" else AUTO)[provider])
     refs = [{"label": r["label"], "url": f"(upload) {os.path.basename(r['path'])}"} for r in _reference_files(d, project)]
-    sung = _sung_for(d, shot, plan, man)
+    plan_name = "directed" if os.path.exists(os.path.join(d, "directed.json")) else "production"
+    kf = approved_keyframe(d, plan_name, shot_id) if kind == "video" else None
+    refs = _with_keyframe(refs, kf)
+    sung = _sung_for(d, shot, plan, man) if kind == "video" else None
     return {"manifest": man, "payload": compile_request(shot, scene, plan, project, man, refs, overrides, None, sung),
+            "keyframe": kf,
             "lip_sync": bool(sung), "singing": singing(d, shot, plan)}
 
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="pulseframe-render")
     sub = p.add_subparsers(dest="cmd", required=True)
-    c = sub.add_parser("catalog"); c.add_argument("--provider", required=True)
+    c = sub.add_parser("catalog"); c.add_argument("--provider", required=True); c.add_argument("--kind", default="video")
     m = sub.add_parser("manifest"); m.add_argument("--provider", required=True); m.add_argument("--model", required=True)
     m.add_argument("--refresh", action="store_true")
     for name in ("preview", "enqueue"):
         s = sub.add_parser(name)
         s.add_argument("project"); s.add_argument("--shots", required=True); s.add_argument("--provider", required=True)
         s.add_argument("--model"); s.add_argument("--overrides", default="{}"); s.add_argument("--fix-notes", default="[]")
+        s.add_argument("--kind", default="video", choices=["video", "image"])
     r = sub.add_parser("run"); r.add_argument("project")
     es = sub.add_parser("estimate"); es.add_argument("project"); es.add_argument("--shots", required=True)
-    es.add_argument("--provider", required=True); es.add_argument("--model")
+    es.add_argument("--provider", required=True); es.add_argument("--model"); es.add_argument("--kind", default="video")
     rs = sub.add_parser("resolve"); rs.add_argument("project"); rs.add_argument("--job", required=True)
     rs.add_argument("--action", choices=["retry", "dismiss", "accept"], required=True)
     a = p.parse_args(argv)
     try:
         if a.cmd == "catalog":
-            emit(event="result", data=catalog(a.provider))
+            emit(event="result", data=catalog(a.provider, a.kind))
         elif a.cmd == "manifest":
             emit(event="result", data=manifest(a.provider, a.model, a.refresh))
         elif a.cmd == "preview":
-            emit(event="result", data=preview(a.project, a.shots.split(",")[0], a.provider, a.model, json.loads(a.overrides)))
+            emit(event="result", data=preview(a.project, a.shots.split(",")[0], a.provider, a.model, json.loads(a.overrides), a.kind))
         elif a.cmd == "enqueue":
             emit(event="result", data=enqueue(a.project, a.shots.split(","), a.provider, a.model, json.loads(a.overrides),
-                                              json.loads(a.fix_notes)))
+                                              json.loads(a.fix_notes), a.kind))
         elif a.cmd == "run":
             run(a.project)
         elif a.cmd == "estimate":
-            emit(event="result", data=estimate(a.project, a.shots.split(","), a.provider, a.model))
+            emit(event="result", data=estimate(a.project, a.shots.split(","), a.provider, a.model, a.kind))
         elif a.cmd == "resolve":
             emit(event="result", data=resolve(a.project, a.job, a.action))
     except SystemExit as e:

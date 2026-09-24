@@ -12,7 +12,7 @@ use std::process::{Command, Stdio};
 use tauri::{AppHandle, Emitter, Manager};
 
 const KEY_SERVICE: &str = "pulseframe";
-const PROVIDERS: [&str; 3] = ["openai", "fal", "kie"];
+const PROVIDERS: [&str; 4] = ["openai", "fal", "kie", "google"];
 
 fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
@@ -332,6 +332,7 @@ fn load_project(app: AppHandle, dir: String) -> Result<Value, String> {
         "directed": read_json(&d.join("directed.json")),
         "jobs": read_json(&d.join("jobs.json")).map(|j| j["jobs"].clone()).unwrap_or(json!([])),
         "doc": doc.map(|p| p.to_string_lossy().to_string()),
+        "keyframes": read_json(&d.join("keyframes.json")).unwrap_or(json!({})),
     }))
 }
 
@@ -386,7 +387,7 @@ async fn direct_project(app: AppHandle, dir: String) -> Result<(), String> {
 fn provider_env() -> Vec<(&'static str, String)> {
     let mut env = vec![];
     // OpenAI powers the visual review of finished takes.
-    for (provider, var) in [("fal", "FAL_KEY"), ("kie", "KIE_KEY"), ("openai", "PULSEFRAME_OPENAI_KEY")] {
+    for (provider, var) in [("fal", "FAL_KEY"), ("kie", "KIE_KEY"), ("openai", "PULSEFRAME_OPENAI_KEY"), ("google", "GEMINI_API_KEY")] {
         if let Ok(k) = keyring::Entry::new(KEY_SERVICE, provider).and_then(|e| e.get_password()) {
             env.push((var, k));
         }
@@ -422,9 +423,10 @@ fn ensure_renderer(app: AppHandle, dir: String) {
 }
 
 #[tauri::command]
-async fn render_catalog(app: AppHandle, provider: String) -> Result<Value, String> {
+async fn render_catalog(app: AppHandle, provider: String, kind: Option<String>) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        run_engine_result(&app, "catalog", &render_args("catalog", &["--provider".into(), provider]), &[])
+        run_engine_result(&app, "catalog", &render_args("catalog", &["--provider".into(), provider, "--kind".into(),
+                                                                    kind.unwrap_or_else(|| "video".into())]), &[])
     }).await.map_err(err)?
 }
 
@@ -448,19 +450,22 @@ fn shot_args(dir: String, shots: Vec<String>, provider: String, model: Option<St
 /// Exactly what would be sent for one shot. Uploads nothing and costs nothing.
 #[tauri::command]
 async fn render_preview(app: AppHandle, dir: String, shot: String, provider: String, model: Option<String>,
-                        overrides: Value) -> Result<Value, String> {
+                        overrides: Value, kind: Option<String>) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        run_engine_result(&app, "preview", &render_args("preview", &shot_args(dir, vec![shot], provider, model, overrides)), &[])
+        let mut a = shot_args(dir, vec![shot], provider, model, overrides);
+        a.extend(["--kind".into(), kind.unwrap_or_else(|| "video".into())]);
+        run_engine_result(&app, "preview", &render_args("preview", &a), &[])
     }).await.map_err(err)?
 }
 
 /// Queue shots for rendering (billable once the renderer sends them) and start the renderer.
 #[tauri::command]
 async fn queue_render(app: AppHandle, dir: String, shots: Vec<String>, provider: String, model: Option<String>,
-                      overrides: Value, fix_notes: Option<Vec<String>>) -> Result<Value, String> {
+                      overrides: Value, fix_notes: Option<Vec<String>>, kind: Option<String>) -> Result<Value, String> {
     let key_ok = keyring::Entry::new(KEY_SERVICE, &provider).and_then(|e| e.get_password()).is_ok();
     if !key_ok {
-        return Err(format!("Add your {} key in Settings first.", if provider == "fal" { "fal.ai" } else { "Kie.ai" }));
+        let name = match provider.as_str() { "fal" => "fal.ai", "kie" => "Kie.ai", "google" => "Google Gemini", _ => "provider" };
+        return Err(format!("Add your {name} key in Settings first."));
     }
     let app2 = app.clone();
     let d2 = dir.clone();
@@ -468,6 +473,7 @@ async fn queue_render(app: AppHandle, dir: String, shots: Vec<String>, provider:
         let mut args = shot_args(d2, shots, provider, model, overrides);
         args.push("--fix-notes".into());
         args.push(json!(fix_notes.unwrap_or_default()).to_string());
+        args.extend(["--kind".into(), kind.unwrap_or_else(|| "video".into())]);
         run_engine_result(&app2, "enqueue", &render_args("enqueue", &args), &[])
     }).await.map_err(err)??;
     ensure_renderer(app, dir);
@@ -476,9 +482,11 @@ async fn queue_render(app: AppHandle, dir: String, shots: Vec<String>, provider:
 
 /// Cost estimate from live provider prices (free; fetches prices only).
 #[tauri::command]
-async fn render_estimate(app: AppHandle, dir: String, shots: Vec<String>, provider: String, model: Option<String>) -> Result<Value, String> {
+async fn render_estimate(app: AppHandle, dir: String, shots: Vec<String>, provider: String, model: Option<String>,
+                         kind: Option<String>) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let mut args = vec![dir, "--shots".into(), shots.join(","), "--provider".into(), provider];
+        let mut args = vec![dir, "--shots".into(), shots.join(","), "--provider".into(), provider,
+                            "--kind".into(), kind.unwrap_or_else(|| "video".into())];
         if let Some(m) = model.filter(|m| !m.is_empty()) {
             args.push("--model".into());
             args.push(m);
@@ -620,6 +628,23 @@ fn import_reference(dir: String, path: String) -> Result<Value, String> {
               "path": refs.join(&name).to_string_lossy()}))
 }
 
+/// Approve (or clear) a keyframe image for a shot; video renders of that shot then start from it.
+#[tauri::command]
+fn set_keyframe(dir: String, plan: String, shot: String, image: Option<String>) -> Result<(), String> {
+    let d = project_dir(&dir)?;
+    let path = d.join("keyframes.json");
+    let mut kf = read_json(&path).unwrap_or_else(|| json!({}));
+    if !kf[&plan].is_object() {
+        kf[&plan] = json!({});
+    }
+    match image {
+        Some(i) if i.starts_with("project:") => { kf[&plan][&shot] = json!(i); }
+        Some(_) => return Err("Keyframes must be project images.".into()),
+        None => { if let Some(o) = kf[&plan].as_object_mut() { o.remove(&shot); } }
+    }
+    write_json(&path, &kf)
+}
+
 // ---------- looks ----------
 
 #[tauri::command]
@@ -717,7 +742,7 @@ pub fn run() {
             key_status, set_key, delete_key, read_text, list_projects, create_project, load_project,
             analyze_project, direct_project, ensure_renderer, render_catalog, model_manifest, render_preview,
             queue_render, resolve_job, export_project, list_styles, set_look, app_ready, render_estimate,
-            save_project, save_project_as, launch_path, set_project_settings, import_reference
+            save_project, save_project_as, launch_path, set_project_settings, import_reference, set_keyframe
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

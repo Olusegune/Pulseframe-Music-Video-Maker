@@ -4,14 +4,14 @@ import * as I from "./icons";
 import { needsAttention } from "./Review";
 import { MediaInput, mediaKind } from "./Media";
 
-export const PROVIDER_NAME: Record<string, string> = { fal: "fal.ai", kie: "Kie.ai" };
+export const PROVIDER_NAME: Record<string, string> = { fal: "fal.ai", kie: "Kie.ai", google: "Google" };
 export const ACTIVE_STATES = ["queued", "submitting", "submitted"];
 
 /** Latest non-dismissed job for each shot of the current plan. */
 export function latestJobs(jobs: Job[], plan: string): Map<string, Job> {
   const m = new Map<string, Job>();
   for (const j of jobs) {
-    if (j.plan !== plan || j.state === "dismissed") continue;
+    if (j.plan !== plan || j.state === "dismissed" || j.kind === "image") continue;
     const cur = m.get(j.shot_id);
     if (!cur || j.created >= cur.created) m.set(j.shot_id, j);
   }
@@ -32,13 +32,13 @@ export function JobChip({ job }: { job?: Job }) {
 }
 
 /** Pick the provider to use by default: whichever has a key, fal first. */
-export const defaultProvider = (keys: KeyStatus) => (keys.fal ? "fal" : keys.kie ? "kie" : "fal");
+export const defaultProvider = (keys: KeyStatus) => (keys.fal ? "fal" : keys.kie ? "kie" : keys.google ? "google" : "fal");
 
 // ---------------------------------------------------------------- inspector panel
 
-export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSettings, lookId }: {
+export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSettings, lookId, keyframeKey }: {
   dir: string; shot: Shot; jobs: Job[]; director: boolean; keys: KeyStatus;
-  onQueued: (jobs: Job[]) => void; onSettings: () => void; lookId: string;
+  onQueued: (jobs: Job[]) => void; onSettings: () => void; lookId: string; keyframeKey?: string | null;
 }) {
   const [provider, setProvider] = useState(defaultProvider(keys));
   const [model, setModel] = useState(AUTO_MODEL[defaultProvider(keys)]);
@@ -52,8 +52,9 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
   const [showRaw, setShowRaw] = useState(false);
   const [lipSync, setLipSync] = useState(false);
   const [singing, setSinging] = useState<{ performer: string; lyrics: string[] } | null>(null);
+  const [keyframeRef, setKeyframeRef] = useState<string | null>(null);
 
-  const history = jobs.filter((j) => j.shot_id === shot.id && j.state !== "dismissed").sort((a, b) => b.created - a.created);
+  const history = jobs.filter((j) => j.shot_id === shot.id && j.state !== "dismissed" && j.kind !== "image").sort((a, b) => b.created - a.created);
   const active = history.find((j) => ACTIVE_STATES.includes(j.state));
   const hasKey = keys[provider as keyof KeyStatus];
 
@@ -68,11 +69,11 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
     let live = true;
     setBusy("Reading model…"); setError("");
     api.renderPreview(dir, shot.id, provider, model, settled)
-      .then((r) => { if (!live) return; setManifest(r.manifest); setAuto(r.payload); setLipSync(!!r.lip_sync); setSinging(r.singing ?? null); })
+      .then((r) => { if (!live) return; setManifest(r.manifest); setAuto(r.payload); setLipSync(!!r.lip_sync); setSinging(r.singing ?? null); setKeyframeRef((r as { keyframe?: string }).keyframe ?? null); })
       .catch((e) => live && setError(errorText(e)))
       .finally(() => live && setBusy(""));
     return () => { live = false; };
-  }, [dir, shot.id, provider, model, settled, lookId]);
+  }, [dir, shot.id, provider, model, settled, lookId, keyframeKey]);
 
   const send = async () => {
     setConfirm(false); setBusy("Queuing…"); setError("");
@@ -93,7 +94,7 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
       ) : (
         <>
           <div className="seg" role="group" aria-label="Provider">
-            {(["fal", "kie"] as const).map((p) => (
+            {(["fal", "kie", "google"] as const).map((p) => (
               <button key={p} className={provider === p ? "on" : ""} onClick={() => { setProvider(p); setModel(AUTO_MODEL[p]); setPins({}); }}>
                 {PROVIDER_NAME[p]}{!keys[p] && <span className="dim"> · no key</span>}
               </button>
@@ -104,6 +105,8 @@ export function RenderPanel({ dir, shot, jobs, director, keys, onQueued, onSetti
                  onChange={(e) => setModel(e.target.value)} onBlur={(e) => { if (!e.target.value) setModel(AUTO_MODEL[provider]); setPins({}); }} />
           <datalist id="model-list">{catalog.map((c) => <option key={c.model} value={c.model}>{c.title}</option>)}</datalist>
           <div className="hint-row">{catalog.length ? `${catalog.length} ${PROVIDER_NAME[provider]} video models` : "Loading models…"} · Auto = {AUTO_MODEL[provider]}</div>
+          {keyframeRef && <div className="lip-note" style={{ color: "var(--signal-bright)", background: "var(--signal-wash)" }}>
+            <I.Check size={14} /> Starts from your approved keyframe.</div>}
           {singing && <div className="lip-note"><I.Note size={14} /> {lipSync ? `Lip-sync: ${singing.performer} sings “${singing.lyrics.join(" / ")}” to the song slice under this shot.`
             : `${singing.performer} sings here, but this model can't take reference audio, so lip-sync is off.`}</div>}
           {manifest && <ModelInputs dir={dir} manifest={manifest} auto={auto} pins={pins} setPins={setPins} />}
@@ -226,21 +229,21 @@ function InputWidget({ f, value, onChange }: { f: ManifestInput; value: unknown;
 
 // ---------------------------------------------------------------- confirmation
 
-export function ConfirmRender({ count, seconds, provider, model, onCancel, onConfirm, dir, shots, modelId }: {
+export function ConfirmRender({ count, seconds, provider, model, onCancel, onConfirm, dir, shots, modelId, kind = "video" }: {
   count: number; seconds: number; provider: string; model: string; onCancel: () => void; onConfirm: () => void;
-  dir?: string; shots?: string[]; modelId?: string | null;
+  dir?: string; shots?: string[]; modelId?: string | null; kind?: "video" | "image";
 }) {
   const [est, setEst] = useState<Estimate | null>(null);
   const [estErr, setEstErr] = useState(false);
   useEffect(() => {
     if (!dir || !shots?.length) return;
-    api.renderEstimate(dir, shots, provider, modelId ?? null).then(setEst).catch(() => setEstErr(true));
-  }, [dir, shots, provider, modelId]);
+    api.renderEstimate(dir, shots, provider, modelId ?? null, kind).then(setEst).catch(() => setEstErr(true));
+  }, [dir, shots, provider, modelId, kind]);
   const big = (est?.usd ?? 0) >= 25;
   return (
     <div className="overlay" onClick={onCancel}>
       <div className="sheet glass" role="dialog" aria-label="Confirm render" onClick={(e) => e.stopPropagation()} style={{ width: "min(500px, calc(100vw - 32px))" }}>
-        <h2>Render {count === 1 ? "this shot" : `${count} shots`}?</h2>
+        <h2>{kind === "image" ? "Make a keyframe?" : `Render ${count === 1 ? "this shot" : `${count} shots`}?`}</h2>
         <p className="sub">
           {PROVIDER_NAME[provider]} · {model}<br />
           {count === 1 && seconds ? `${seconds} s of video, trimmed to the beat in the edit.` : ""}
@@ -251,7 +254,7 @@ export function ConfirmRender({ count, seconds, provider, model, onCancel, onCon
               <div className="cost-n num">≈ ${est.usd.toFixed(2)}</div>
               <div className="dim">{count > 1 ? `about $${(est.usd / count).toFixed(2)} per shot · ` : ""}{est.basis}</div>
             </> : <>
-              <div className="cost-n">{provider === "kie" ? "Billed in Kie credits" : "Price not published"}</div>
+              <div className="cost-n">{provider === "kie" ? "Billed in Kie credits" : provider === "google" ? "Billed by Google" : "Price not published"}</div>
               <div className="dim">{est.basis}{est.kie_credits != null ? ` Balance: ${est.kie_credits.toLocaleString()} credits.` : ""}</div>
             </>
           ) : estErr ? <div className="dim">Couldn't fetch the price right now.</div> : <div className="dim">Checking price…</div>}

@@ -6,6 +6,7 @@ import { AUTO_MODEL, type Job, type KeyStatus } from "./api";
 import { ExportSheet } from "./Export";
 import { LookPicker, lookName, normalizeLook, useStyles } from "./Looks";
 import { needsAttention, ReviewSheet } from "./Review";
+import { KeyframePanel } from "./Keyframe";
 
 type Selection = { kind: "shot"; id: string } | { kind: "section"; index: number } | null;
 
@@ -26,11 +27,12 @@ export function Studio({ project, onHome, onSettings, onReload }: {
   const [job, setJob] = useState<{ title: string; detail: string } | null>(null);
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<Job[]>(project.jobs ?? []);
-  const [keys, setKeys] = useState<KeyStatus>({ openai: false, fal: false, kie: false });
+  const [keys, setKeys] = useState<KeyStatus>({ openai: false, fal: false, kie: false, google: false });
   const [confirmAll, setConfirmAll] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [lookOpen, setLookOpen] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const [keyframes, setKeyframes] = useState<Record<string, Record<string, string>>>(project.keyframes ?? {});
   const [look, setLook] = useState(normalizeLook(project.project.look));
   const styles = useStyles();
   // Studio-level File/View menu items.
@@ -190,9 +192,13 @@ export function Studio({ project, onHome, onSettings, onReload }: {
       <aside className={`inspector ${inspector ? "" : "collapsed"}`} aria-label="Inspector">
         <Inspector sel={sel} shots={shots} scenes={scenes} map={map} plan={plan} director={director} project={project}
                    onClose={() => setSel(null)} lookLabel={lookName(styles, look)} onLook={() => setLookOpen(true)}
-                   renderPanel={(s: Shot) => <RenderPanel dir={project.dir} shot={s} jobs={jobs.filter((j) => j.plan === planName)}
-                                                          director={director} keys={keys} onQueued={mergeJobs} onSettings={onSettings}
-                                                          lookId={look.style} />} />
+                   renderPanel={(s: Shot) => <>
+                     <KeyframePanel dir={project.dir} shot={s} plan={planName} jobs={jobs.filter((j) => j.plan === planName)} keys={keys}
+                                    director={director} approved={keyframes[planName]?.[s.id] ?? null} onJobs={mergeJobs} onSettings={onSettings}
+                                    onApproved={(ref) => setKeyframes((k) => ({ ...k, [planName]: { ...(k[planName] ?? {}), [s.id]: ref ?? "" } }))} />
+                     <RenderPanel dir={project.dir} shot={s} jobs={jobs.filter((j) => j.plan === planName)}
+                                  director={director} keys={keys} onQueued={mergeJobs} onSettings={onSettings}
+                                  lookId={look.style} keyframeKey={keyframes[planName]?.[s.id] ?? null} /></>} />
       </aside>
 
       <Timeline map={map} shots={shots} time={time} sel={sel} flagged={flagged} latest={latest}

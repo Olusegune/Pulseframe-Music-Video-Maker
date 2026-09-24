@@ -6,11 +6,12 @@ const PROVIDERS: { id: keyof KeyStatus; name: string; purpose: string }[] = [
   { id: "openai", name: "OpenAI", purpose: "Director Engine: treatment, shot planning and direction" },
   { id: "fal", name: "fal.ai", purpose: "Video and image rendering" },
   { id: "kie", name: "Kie.ai", purpose: "Video and image rendering" },
+  { id: "google", name: "Google Gemini", purpose: "Veo video and Nano Banana images, direct from Google" },
 ];
 
 /** Keys go straight to the Windows Credential Manager / macOS Keychain; they never touch project files. */
 export function Settings({ onClose }: { onClose: () => void }) {
-  const [status, setStatus] = useState<KeyStatus>({ openai: false, fal: false, kie: false });
+  const [status, setStatus] = useState<KeyStatus>({ openai: false, fal: false, kie: false, google: false });
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<Record<string, string>>({});
 

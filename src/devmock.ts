@@ -23,7 +23,8 @@ export async function installMock() {
     switch (cmd) {
       case "list_projects": return [{ dir: "mock", title: "Exit Plan", state: "analyzed", modified: Date.now() / 1000, song: "song.wav" }];
       case "load_project": return { dir: "mock", project, song_path: url("song.wav"), song_map, production, directed: null, jobs };
-      case "key_status": return { openai: false, fal: true, kie: false };
+      case "key_status": return { openai: false, fal: true, kie: false, google: false };
+      case "set_keyframe": return null;
       case "render_preview": return preview;
       case "render_catalog": return [{ provider: "fal", model: preview.manifest.model, title: preview.manifest.title, category: "image-to-video" }];
       case "queue_render": return [];
