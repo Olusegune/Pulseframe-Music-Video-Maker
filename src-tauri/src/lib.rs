@@ -48,8 +48,22 @@ fn init_engine(app: &AppHandle) {
         let code = app.path().resource_dir().map(|r| r.join("engine")).unwrap_or_default();
         let env = installed_env(app).unwrap_or_default();
         let py = if cfg!(windows) { env.join("python.exe") } else { env.join("bin").join("python3") };
+        link_engine_code(&env, &code);
         (code, py)
     });
+}
+
+/// The embedded interpreter ignores PYTHONPATH, so register the engine code with it via a .pth file.
+/// Refreshed on every launch in case the app was moved or updated.
+fn link_engine_code(env: &Path, code: &Path) {
+    let sp = env.join("Lib").join("site-packages");
+    if sp.exists() {
+        let want = code.to_string_lossy().to_string();
+        let pth = sp.join("pulseframe_engine.pth");
+        if fs::read_to_string(&pth).map(|c| c.trim() != want).unwrap_or(true) {
+            let _ = fs::write(&pth, want);
+        }
+    }
 }
 
 fn engine_dir() -> PathBuf {
@@ -274,8 +288,9 @@ async fn setup_engine(app: AppHandle) -> Result<Value, String> {
         if gpu {
             run_quiet(&s(&py), &["-m", "pip", "install", "--no-warn-script-location", "nvidia-cublas-cu12", "nvidia-cudnn-cu12==9.*"], Some(&env))?;
         }
+        link_engine_code(&env, &engine_dir());
         setup_step(&app, 5, total, "Checking everything works");
-        run_quiet(&s(&py), &["-c", "import librosa, demucs, faster_whisper, openai, fal_client, pypdf, imageio_ffmpeg, PIL, yaml, keyring"], Some(&env))?;
+        run_quiet(&s(&py), &["-c", "import librosa, demucs, faster_whisper, openai, fal_client, pypdf, imageio_ffmpeg, PIL, yaml, keyring, pulseframe_analysis.render"], Some(&env))?;
         fs::write(env.join(".ready"), "ok").map_err(err)?;
         Ok(json!({"ready": true, "gpu": gpu}))
     }).await.map_err(err)?

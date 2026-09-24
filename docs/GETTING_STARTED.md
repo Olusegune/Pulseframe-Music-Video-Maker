@@ -6,6 +6,12 @@ You stay the director. Nothing is ever charged to your accounts without a confir
 
 ---
 
+## 0. First launch
+
+The first time PULSEFRAME opens on a new computer it sets up its engine (the part that listens to songs, times lyrics and talks to the AI renderers). This is automatic, needs an internet connection, and happens only once: about 2 GB, or about 3 GB with an NVIDIA graphics card, which PULSEFRAME then uses to analyse songs faster. The first song you analyse also downloads the lyric-timing model once.
+
+---
+
 ## 1. Connect your accounts (once)
 
 Open **Settings** (the gear icon, or **File → Settings…**, `Ctrl+,`) and paste the keys you have. Keys are stored by Windows' secure credential store, never inside your projects.
